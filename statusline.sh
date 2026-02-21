@@ -19,6 +19,16 @@ USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
 LOCK_FILE="${LOCK_FILE:-/tmp/claude-usage-refresh.lock}"
 TMUX_SESSION="${TMUX_SESSION:-claude-usage-bg}"
 
+# ── Helper: run date with optional timezone (empty = system default) ──────────
+tz_date() {
+    local tz="$1"; shift
+    if [ -n "$tz" ]; then
+        TZ="$tz" date "$@"
+    else
+        date "$@"
+    fi
+}
+
 # ── Read JSON input from stdin ────────────────────────────────────────────────
 JSON=$(cat)
 
@@ -226,14 +236,14 @@ if [ -f "$USAGE_FILE" ]; then
             RESET_TZ=$(echo "$U_SESS_RESETS" | grep -oP '\(([^)]+)\)' | tr -d '()')
             [ -z "$RESET_TZ" ] && RESET_TZ="${TIMEZONE}"
             RESET_TIME_STR=$(echo "$U_SESS_RESETS" | sed 's/ *([^)]*)//')
-            RESET_EPOCH=$(TZ=${RESET_TZ} date -d "today $RESET_TIME_STR" +%s 2>/dev/null)
+            RESET_EPOCH=$(tz_date "${RESET_TZ}" -d "today $RESET_TIME_STR" +%s 2>/dev/null)
             NOW=$(date +%s)
             # If the reset time has already passed today, shift to tomorrow
             [ -n "$RESET_EPOCH" ] && [ "$RESET_EPOCH" -le "$NOW" ] && \
-                RESET_EPOCH=$(TZ=${RESET_TZ} date -d "tomorrow $RESET_TIME_STR" +%s 2>/dev/null)
+                RESET_EPOCH=$(tz_date "${RESET_TZ}" -d "tomorrow $RESET_TIME_STR" +%s 2>/dev/null)
             if [ -n "$RESET_EPOCH" ] && [ "$RESET_EPOCH" -gt "$NOW" ]; then
                 # Display in user's local timezone (or TIMEZONE if set)
-                RESET_TIME=$(TZ=${TIMEZONE} date -d "@$RESET_EPOCH" +"%Hh%M" 2>/dev/null)
+                RESET_TIME=$(tz_date "${TIMEZONE}" -d "@$RESET_EPOCH" +"%Hh%M" 2>/dev/null)
                 REMAIN=$(( RESET_EPOCH - NOW ))
                 RH=$(( REMAIN / 3600 )); RM=$(( (REMAIN % 3600) / 60 ))
                 [ $RH -gt 0 ] && REMAIN_STR="${RH}h${RM}m" || REMAIN_STR="${RM}m"
@@ -258,24 +268,11 @@ if [ -f "$USAGE_FILE" ]; then
             # Extract timezone from reset string, e.g. "Feb 23, 2pm (Europe/Paris)"
             WEEK_TZ=$(echo "$U_WEEK_RESETS" | grep -oP '\(([^)]+)\)' | tr -d '()')
             [ -z "$WEEK_TZ" ] && WEEK_TZ="${TIMEZONE}"
+            # Strip timezone annotation and let date parse directly (handles "Feb 23, 1:59pm")
             DATE_PART=$(echo "$U_WEEK_RESETS" | sed 's/ *([^)]*)//' | sed 's/,//')
-            HOUR_RAW=$(echo "$DATE_PART" | grep -oP '\d+(?=pm|am)')
-            AMPM=$(echo "$DATE_PART" | grep -oP '(am|pm)')
-            DATE_NOTIME=$(echo "$DATE_PART" | sed 's/[0-9]*[ap]m//')
-            # Convert 12-hour am/pm to 24-hour format
-            if [ -n "$HOUR_RAW" ]; then
-                if [ "$AMPM" = "pm" ] && [ "$HOUR_RAW" -lt 12 ]; then
-                    HOUR_24=$(( HOUR_RAW + 12 ))
-                elif [ "$AMPM" = "am" ] && [ "$HOUR_RAW" -eq 12 ]; then
-                    HOUR_24=0
-                else
-                    HOUR_24=$HOUR_RAW
-                fi
-                DATE_PART="${DATE_NOTIME} $(printf '%02d' $HOUR_24):00"
-            fi
-            WEEK_EPOCH=$(TZ=${WEEK_TZ} date -d "$DATE_PART" +%s 2>/dev/null)
+            WEEK_EPOCH=$(tz_date "${WEEK_TZ}" -d "$DATE_PART" +%s 2>/dev/null)
             [ -n "$WEEK_EPOCH" ] && \
-                WEEK_RESET_LABEL=$(TZ=${TIMEZONE} date -d "@$WEEK_EPOCH" +"%a %Hh" 2>/dev/null \
+                WEEK_RESET_LABEL=$(tz_date "${TIMEZONE}" -d "@$WEEK_EPOCH" +"%a %Hh" 2>/dev/null \
                     | tr '[:upper:]' '[:lower:]')
         fi
 
