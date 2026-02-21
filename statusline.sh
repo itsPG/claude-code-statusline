@@ -82,93 +82,101 @@ lock_stale() {
 if [ $(cache_age_sec) -gt "$REFRESH_INTERVAL" ]; then
     if [ ! -f "$LOCK_FILE" ] || lock_stale; then
         touch "$LOCK_FILE"
-        (
-            SESSION="$TMUX_SESSION"
-            PANE="$SESSION:0"
+        # Resolve claude path now (parent shell has the correct PATH)
+        CLAUDE_BIN=$(command -v claude 2>/dev/null || echo "claude")
+        # Write the scraper to a temp file and launch it fully detached
+        # (Claude Code kills child processes of hooks, so we need setsid)
+        SCRAPER="/tmp/.claude-usage-scraper.sh"
+        cat > "$SCRAPER" <<SCRAPER_EOF
+#!/bin/bash
+SESSION="$TMUX_SESSION"
+PANE="\$SESSION:0"
 
-            cleanup() {
-                tmux kill-session -t "$SESSION" 2>/dev/null
-                rm -f "$LOCK_FILE"
-            }
-            trap cleanup EXIT INT TERM
+cleanup() {
+    tmux kill-session -t "\$SESSION" 2>/dev/null
+    rm -f "$LOCK_FILE" "$SCRAPER"
+}
+trap cleanup EXIT INT TERM
 
-            # Start a fresh hidden tmux session
-            tmux kill-session -t "$SESSION" 2>/dev/null
-            tmux new-session -d -s "$SESSION" -x 220 -y 50 2>/dev/null || exit 1
-            sleep 0.5
+tmux kill-session -t "\$SESSION" 2>/dev/null
+tmux new-session -d -s "\$SESSION" -x 220 -y 50 2>/dev/null || exit 1
+sleep 0.5
 
-            # Resolve the full path to claude (tmux may not inherit the user's PATH)
-            CLAUDE_BIN=$(command -v claude 2>/dev/null || echo "claude")
-            tmux send-keys -t "$PANE" "env -u CLAUDECODE $CLAUDE_BIN" Enter
+tmux send-keys -t "\$PANE" "env -u CLAUDECODE $CLAUDE_BIN" Enter
 
-            # Poll until Claude Code prompt is ready (up to 60s)
-            for i in $(seq 1 60); do
-                sleep 1
-                content=$(tmux capture-pane -t "$PANE" -p 2>/dev/null)
-                # Accept trust/folder prompt if it appears
-                if echo "$content" | grep -qi "trust\|yes.*trust\|folder"; then
-                    tmux send-keys -t "$PANE" "" Enter
-                fi
-                # Claude is ready when we see the prompt
-                if echo "$content" | grep -qi "try\|claude code\|❯\|How can"; then
-                    break
-                fi
-            done
+# Poll until Claude Code prompt is ready (up to 60s)
+for i in \$(seq 1 60); do
+    sleep 1
+    content=\$(tmux capture-pane -t "\$PANE" -p 2>/dev/null)
+    if echo "\$content" | grep -qi "trust\|yes.*trust\|folder"; then
+        tmux send-keys -t "\$PANE" "" Enter
+    fi
+    if echo "\$content" | grep -qi "try\|claude code\|❯\|How can"; then
+        break
+    fi
+done
 
-            # Send /usage command and confirm selection
-            tmux send-keys -t "$PANE" "/usage" Enter
-            sleep 2
-            tmux send-keys -t "$PANE" "" Enter
+# Send /usage command and confirm selection
+tmux send-keys -t "\$PANE" "/usage" Enter
+sleep 2
+tmux send-keys -t "\$PANE" "" Enter
 
-            # Poll until usage data appears (up to 30s)
-            for i in $(seq 1 30); do
-                sleep 1
-                content=$(tmux capture-pane -t "$PANE" -p -S -300 2>/dev/null)
-                if echo "$content" | grep -qi "% used"; then
-                    break
-                fi
-            done
+# Poll until usage data appears (up to 30s)
+for i in \$(seq 1 30); do
+    sleep 1
+    content=\$(tmux capture-pane -t "\$PANE" -p -S -300 2>/dev/null)
+    if echo "\$content" | grep -qi "% used"; then
+        break
+    fi
+done
 
-            RAW=$(tmux capture-pane -t "$PANE" -p -S -300 2>/dev/null)
+RAW=\$(tmux capture-pane -t "\$PANE" -p -S -300 2>/dev/null)
 
-            # Parse the /usage output with Python and write the JSON cache file
-            python3 - <<PYEOF
-import json, re, sys
+# Write raw output to temp file for Python to read (avoids quoting issues)
+TMPRAW="/tmp/.claude-usage-raw.txt"
+echo "\$RAW" > "\$TMPRAW"
+
+python3 -c "
+import json, re
 from datetime import datetime, timezone
 
-text = """$RAW"""
+with open('\$TMPRAW') as f:
+    text = f.read()
+
 now = datetime.now(timezone.utc).isoformat()
-result = {"timestamp": now, "source": "/usage", "metrics": {}}
+result = {'timestamp': now, 'source': '/usage', 'metrics': {}}
 
 blocks = re.findall(
     r'(Current session|Current week.*?|Sonnet only.*?)\n'
     r'.*?(\d+(?:\.\d+)?)\s*%\s*used'
-    r'(?:\n.*?Resets\s+(.+?)(?:\n|\$))?',
+    r'(?:\n.*?Resets\s+(.+?)(?:\n|$))?',
     text, re.IGNORECASE | re.DOTALL
 )
 for label_raw, pct, resets in blocks:
     label = label_raw.strip().lower()
     pct_val = float(pct)
-    if "session" in label:
-        key = "session"
-    elif "sonnet" in label:
-        key = "week_sonnet"
-    elif "week" in label:
-        key = "week_all"
+    if 'session' in label:
+        key = 'session'
+    elif 'sonnet' in label:
+        key = 'week_sonnet'
+    elif 'week' in label:
+        key = 'week_all'
     else:
         key = re.sub(r'\W+', '_', label)
-    result["metrics"][key] = {
-        "percent_used": pct_val,
-        "percent_remaining": round(100 - pct_val, 1),
-        "resets": resets.strip() if resets else None,
+    result['metrics'][key] = {
+        'percent_used': pct_val,
+        'percent_remaining': round(100 - pct_val, 1),
+        'resets': resets.strip() if resets else None,
     }
 
-if result["metrics"]:
-    with open("$USAGE_FILE", "w") as f:
+if result['metrics']:
+    with open('$USAGE_FILE', 'w') as f:
         json.dump(result, f, indent=2)
-PYEOF
-        ) &>/dev/null &
-        disown
+"
+rm -f "\$TMPRAW"
+SCRAPER_EOF
+        chmod +x "$SCRAPER"
+        nohup setsid "$SCRAPER" >/dev/null 2>&1 &
     fi
 fi
 
