@@ -38,10 +38,10 @@ The cached data (`~/.claude/usage-exact.json`) is then read on each status line 
 curl -fsSL https://raw.githubusercontent.com/ohugonnot/claude-code-statusline/main/install.sh | bash
 ```
 
-With custom refresh interval (e.g. every 60 seconds):
+With custom refresh interval (e.g. every 5 minutes — minimum recommended):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ohugonnot/claude-code-statusline/main/install.sh | bash -s -- --refresh 60
+curl -fsSL https://raw.githubusercontent.com/ohugonnot/claude-code-statusline/main/install.sh | bash -s -- --refresh 300
 ```
 
 ### Manual
@@ -76,7 +76,7 @@ Edit the top of `statusline.sh` or export in your shell profile:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TIMEZONE` | *(auto-detected)* | Override display timezone (e.g. `America/New_York`) |
-| `REFRESH_INTERVAL` | `300` | Seconds between `/usage` scrapes |
+| `REFRESH_INTERVAL` | `600` | Seconds between `/usage` scrapes |
 
 ## Troubleshooting
 

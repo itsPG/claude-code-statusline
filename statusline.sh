@@ -14,7 +14,7 @@
 
 # ── Configuration (override via environment variables) ────────────────────────
 TIMEZONE="${TIMEZONE:-}"                           # e.g. "America/New_York", empty = system default
-REFRESH_INTERVAL="${REFRESH_INTERVAL:-300}"         # seconds between usage scrapes (default: 5min)
+REFRESH_INTERVAL="${REFRESH_INTERVAL:-600}"         # seconds between usage scrapes (default: 10min)
 USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
 LOCK_FILE="${LOCK_FILE:-/tmp/claude-usage-refresh.lock}"
 TMUX_SESSION="${TMUX_SESSION:-claude-usage-bg}"
