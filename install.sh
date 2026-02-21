@@ -20,17 +20,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/dev/null}")" 2>/dev/null && pwd 
 
 echo "=== Claude Code Status Line Installer ==="
 
-# 1. Check dependencies
+# 1. Check dependencies and offer to install missing ones
 echo ""
 echo "Checking dependencies..."
 
-for dep in bash jq tmux python3; do
+MISSING=()
+for dep in jq tmux python3; do
     if command -v "$dep" >/dev/null 2>&1; then
         echo "  [ok] $dep"
     else
-        echo "  [warn] $dep not found — install with: sudo apt install $dep"
+        echo "  [missing] $dep"
+        MISSING+=("$dep")
     fi
 done
+
+if [ ${#MISSING[@]} -gt 0 ]; then
+    echo ""
+    read -rp "Install missing packages (${MISSING[*]})? [Y/n] " answer
+    if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
+        sudo apt install -y "${MISSING[@]}"
+        echo "  Packages installed."
+    else
+        echo "  Skipped. Some features may not work without: ${MISSING[*]}"
+    fi
+fi
 
 # 2. Install statusline.sh
 echo ""
