@@ -74,7 +74,7 @@ cache_age_sec() {
 lock_stale() {
     [ ! -f "$LOCK_FILE" ] && return 1
     age=$(( $(date +%s) - $(date -r "$LOCK_FILE" +%s 2>/dev/null || echo 0) ))
-    [ $age -gt 90 ]
+    [ $age -gt 120 ]
 }
 
 # ── Background refresh: launch a hidden tmux session that runs /usage ─────────
@@ -99,33 +99,35 @@ if [ $(cache_age_sec) -gt "$REFRESH_INTERVAL" ]; then
 
             # Resolve the full path to claude (tmux may not inherit the user's PATH)
             CLAUDE_BIN=$(command -v claude 2>/dev/null || echo "claude")
-            tmux send-keys -t "$PANE" "env -u CLAUDECODE $CLAUDE_BIN 2>/dev/null" Enter
+            tmux send-keys -t "$PANE" "env -u CLAUDECODE $CLAUDE_BIN" Enter
 
-            # Wait for the trust/folder prompt and accept it
-            for i in $(seq 1 15); do
+            # Poll until Claude Code prompt is ready (up to 60s)
+            for i in $(seq 1 60); do
                 sleep 1
                 content=$(tmux capture-pane -t "$PANE" -p 2>/dev/null)
+                # Accept trust/folder prompt if it appears
                 if echo "$content" | grep -qi "trust\|yes.*trust\|folder"; then
                     tmux send-keys -t "$PANE" "" Enter
-                    break
                 fi
-            done
-
-            # Wait for the Claude Code prompt to be ready
-            for i in $(seq 1 25); do
-                sleep 1
-                content=$(tmux capture-pane -t "$PANE" -p 2>/dev/null)
+                # Claude is ready when we see the prompt
                 if echo "$content" | grep -qi "try\|claude code\|❯\|How can"; then
                     break
                 fi
             done
-            sleep 1
 
-            # Send /usage command and capture the output
+            # Send /usage command and confirm selection
             tmux send-keys -t "$PANE" "/usage" Enter
-            sleep 1
+            sleep 2
             tmux send-keys -t "$PANE" "" Enter
-            sleep 5
+
+            # Poll until usage data appears (up to 30s)
+            for i in $(seq 1 30); do
+                sleep 1
+                content=$(tmux capture-pane -t "$PANE" -p -S -300 2>/dev/null)
+                if echo "$content" | grep -qi "% used"; then
+                    break
+                fi
+            done
 
             RAW=$(tmux capture-pane -t "$PANE" -p -S -300 2>/dev/null)
 
