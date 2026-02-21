@@ -83,10 +83,22 @@ fi
 [ -z "$BRANCH" ] && BRANCH="(no git)"
 [ ${#BRANCH} -gt 33 ] && BRANCH="${BRANCH:0:30}..."
 
+# ── Helper: get file modification time as epoch seconds (Linux + macOS) ───────
+file_mtime() {
+    local f="$1"
+    if stat --version &>/dev/null; then
+        # GNU stat (Linux)
+        stat -c %Y "$f" 2>/dev/null || echo 0
+    else
+        # BSD stat (macOS)
+        stat -f %m "$f" 2>/dev/null || echo 0
+    fi
+}
+
 # ── Helper: age in seconds of the usage cache file ───────────────────────────
 cache_age_sec() {
     [ ! -f "$USAGE_FILE" ] && echo 999999 && return
-    echo $(( $(date +%s) - $(date -r "$USAGE_FILE" +%s 2>/dev/null || echo 0) ))
+    echo $(( $(date +%s) - $(file_mtime "$USAGE_FILE") ))
 }
 
 # ── Helper: true if a scraper is already running ──────────────────────────────
@@ -95,7 +107,7 @@ scraper_running() {
     tmux has-session -t "$TMUX_SESSION" 2>/dev/null && return 0
     # If lock exists but tmux is dead, check if stale
     [ ! -f "$LOCK_FILE" ] && return 1
-    local age=$(( $(date +%s) - $(date -r "$LOCK_FILE" +%s 2>/dev/null || echo 0) ))
+    local age=$(( $(date +%s) - $(file_mtime "$LOCK_FILE") ))
     [ $age -le 120 ]
 }
 
@@ -115,12 +127,17 @@ SESSION="$TMUX_SESSION"
 PANE="\$SESSION:0"
 
 cleanup() {
+    kill \$WATCHDOG_PID 2>/dev/null
     tmux kill-session -t "\$SESSION" 2>/dev/null
     rm -f "$SCRAPER"
     # Keep lock file alive (touch it) so the hook doesn't relaunch immediately
     touch "$LOCK_FILE"
 }
 trap cleanup EXIT INT TERM
+
+# Global timeout: kill this scraper after 120s to prevent zombie sessions
+( sleep 120; kill \$\$ 2>/dev/null ) &
+WATCHDOG_PID=\$!
 
 tmux kill-session -t "\$SESSION" 2>/dev/null
 tmux new-session -d -s "\$SESSION" -x 220 -y 50 2>/dev/null || exit 1

@@ -4,6 +4,13 @@
 STATUSLINE_SH="$(dirname "$(realpath "$0")")/statusline.sh"
 PASS=0; FAIL=0
 
+# Track temp files for cleanup
+TMPFILES=()
+cleanup_tests() {
+    for f in "${TMPFILES[@]}"; do rm -f "$f"; done
+}
+trap cleanup_tests EXIT INT TERM
+
 assert_eq() {
     local desc="$1" expected="$2" actual="$3"
     if [ "$actual" = "$expected" ]; then
@@ -147,6 +154,7 @@ fi
 echo ""
 echo "-- Test 3: usage cache with session + week_all --"
 USAGE_TMP=$(mktemp /tmp/test-usage-XXXX.json)
+TMPFILES+=("$USAGE_TMP")
 cat > "$USAGE_TMP" <<'JSON'
 {
   "timestamp": "2026-02-21T10:00:00+00:00",
@@ -169,12 +177,12 @@ OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_pe
     USAGE_FILE="$USAGE_TMP" REFRESH_INTERVAL=999999)
 assert_contains "session 46% shown"  "46%" "$OUT"
 assert_contains "week_all 59% shown" "59%" "$OUT"
-rm -f "$USAGE_TMP"
 
 # Test 4 — Cache stale (30 minutes old, REFRESH_INTERVAL=300 → stale threshold 600s)
 echo ""
 echo "-- Test 4: stale cache shows ⚠ --"
 USAGE_STALE=$(mktemp /tmp/test-usage-stale-XXXX.json)
+TMPFILES+=("$USAGE_STALE")
 cat > "$USAGE_STALE" <<'JSON'
 {
   "timestamp": "2026-02-21T09:00:00+00:00",
@@ -193,12 +201,12 @@ touch -d '30 minutes ago' "$USAGE_STALE"
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 0}}' \
     USAGE_FILE="$USAGE_STALE" REFRESH_INTERVAL=300)
 assert_contains "stale cache shows ⚠" "⚠" "$OUT"
-rm -f "$USAGE_STALE"
 
 # Test 5 — Fresh cache does NOT show ⚠
 echo ""
 echo "-- Test 5: fresh cache does NOT show ⚠ --"
 USAGE_FRESH=$(mktemp /tmp/test-usage-fresh-XXXX.json)
+TMPFILES+=("$USAGE_FRESH")
 cat > "$USAGE_FRESH" <<'JSON'
 {
   "timestamp": "2026-02-21T10:00:00+00:00",
@@ -216,12 +224,12 @@ JSON
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 0}}' \
     USAGE_FILE="$USAGE_FRESH" REFRESH_INTERVAL=300)
 assert_not_contains "fresh cache does not show ⚠" "⚠" "$OUT"
-rm -f "$USAGE_FRESH"
 
 # Test 6 — week_sonnet metric is shown with "Snt" suffix
 echo ""
 echo "-- Test 6: week_sonnet shown with Snt label --"
 USAGE_SNT=$(mktemp /tmp/test-usage-snt-XXXX.json)
+TMPFILES+=("$USAGE_SNT")
 cat > "$USAGE_SNT" <<'JSON'
 {
   "timestamp": "2026-02-21T10:00:00+00:00",
@@ -239,7 +247,6 @@ OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_pe
     USAGE_FILE="$USAGE_SNT" REFRESH_INTERVAL=999999)
 assert_contains "week_sonnet 72% shown"   "72%" "$OUT"
 assert_contains "week_sonnet Snt label"   "Snt" "$OUT"
-rm -f "$USAGE_SNT"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
