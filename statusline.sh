@@ -97,8 +97,9 @@ if [ $(cache_age_sec) -gt "$REFRESH_INTERVAL" ]; then
             tmux new-session -d -s "$SESSION" -x 220 -y 50 2>/dev/null || exit 1
             sleep 0.5
 
-            # Launch Claude Code without the CLAUDECODE env var to avoid recursion
-            tmux send-keys -t "$PANE" "env -u CLAUDECODE claude 2>/dev/null" Enter
+            # Resolve the full path to claude (tmux may not inherit the user's PATH)
+            CLAUDE_BIN=$(command -v claude 2>/dev/null || echo "claude")
+            tmux send-keys -t "$PANE" "env -u CLAUDECODE $CLAUDE_BIN 2>/dev/null" Enter
 
             # Wait for the trust/folder prompt and accept it
             for i in $(seq 1 15); do
