@@ -70,17 +70,20 @@ cache_age_sec() {
     echo $(( $(date +%s) - $(date -r "$USAGE_FILE" +%s 2>/dev/null || echo 0) ))
 }
 
-# ── Helper: true if the lock file is older than 90 seconds (stale) ───────────
-lock_stale() {
+# ── Helper: true if a scraper is already running ──────────────────────────────
+scraper_running() {
+    # If the tmux session exists, a scraper is active
+    tmux has-session -t "$TMUX_SESSION" 2>/dev/null && return 0
+    # If lock exists but tmux is dead, check if stale
     [ ! -f "$LOCK_FILE" ] && return 1
-    age=$(( $(date +%s) - $(date -r "$LOCK_FILE" +%s 2>/dev/null || echo 0) ))
-    [ $age -gt 120 ]
+    local age=$(( $(date +%s) - $(date -r "$LOCK_FILE" +%s 2>/dev/null || echo 0) ))
+    [ $age -le 120 ]
 }
 
 # ── Background refresh: launch a hidden tmux session that runs /usage ─────────
-# Triggered when the cache is older than REFRESH_INTERVAL and no lock is held.
+# Triggered when the cache is older than REFRESH_INTERVAL and no scraper is active.
 if [ $(cache_age_sec) -gt "$REFRESH_INTERVAL" ]; then
-    if [ ! -f "$LOCK_FILE" ] || lock_stale; then
+    if ! scraper_running; then
         touch "$LOCK_FILE"
         # Resolve claude path now (parent shell has the correct PATH)
         CLAUDE_BIN=$(command -v claude 2>/dev/null || echo "claude")
@@ -94,7 +97,9 @@ PANE="\$SESSION:0"
 
 cleanup() {
     tmux kill-session -t "\$SESSION" 2>/dev/null
-    rm -f "$LOCK_FILE" "$SCRAPER"
+    rm -f "$SCRAPER"
+    # Keep lock file alive (touch it) so the hook doesn't relaunch immediately
+    touch "$LOCK_FILE"
 }
 trap cleanup EXIT INT TERM
 
@@ -104,14 +109,29 @@ sleep 0.5
 
 tmux send-keys -t "\$PANE" "env -u CLAUDECODE $CLAUDE_BIN" Enter
 
-# Poll until Claude Code prompt is ready (up to 60s)
+# Phase 1: Handle trust dialog if it appears (up to 15s)
+for i in \$(seq 1 15); do
+    sleep 1
+    content=\$(tmux capture-pane -t "\$PANE" -p 2>/dev/null)
+    if echo "\$content" | grep -qi "trust.*folder\|Yes.*trust"; then
+        tmux send-keys -t "\$PANE" "" Enter
+        sleep 2
+        break
+    fi
+    # Skip if Claude loaded directly (no trust dialog)
+    if echo "\$content" | grep -q "Claude Code v"; then
+        break
+    fi
+done
+
+# Phase 2: Wait for Claude to be fully ready (splash screen loaded)
 for i in \$(seq 1 60); do
     sleep 1
     content=\$(tmux capture-pane -t "\$PANE" -p 2>/dev/null)
-    if echo "\$content" | grep -qi "trust\|yes.*trust\|folder"; then
-        tmux send-keys -t "\$PANE" "" Enter
-    fi
-    if echo "\$content" | grep -qi "try\|claude code\|❯\|How can"; then
+    # The splash box with model name means Claude is interactive
+    if echo "\$content" | grep -qi "Opus\|Sonnet\|Haiku\|How can\|Try "; then
+        # Extra wait to ensure the input prompt is active
+        sleep 2
         break
     fi
 done
