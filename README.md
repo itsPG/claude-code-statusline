@@ -3,7 +3,7 @@
 **Know your Claude Code rate limits in real time.** No more guessing when your session or weekly quota resets — see your actual `/usage` data live in the status bar.
 
 ```
-🌿 main │ 🤖 Sonnet 4.6 │ 🟢 Ctx ▓▓░░░░░░ 34% │ 🟡 ▓▓▓░░░░░ 46% → 19h00 (3h20m) │ 🟡 ▓▓▓░░░░░ 42% Snt │ 🔴 ▓▓▓▓▓░░░ 59% (mon 14h)
+🌿 main │ 🤖 Sonnet 4.6 │ 🟢 Ctx ▓▓░░░░░░ 34% │ ⏳ 🟡 ▓▓▓░░░░░ 46% → 19h00 (3h20m) │ 📅 🟡 42% / Snt 🔴 59% ↻ mon 14h 🔄 5m
 ```
 
 ## Why?
@@ -18,10 +18,10 @@ All three metrics use color-coded progress bars: 🟢 under 50% | 🟡 50-80% | 
 
 | Segment | Example | Description |
 |---------|---------|-------------|
-| **Session** | `🟡 ▓▓▓░░░░░ 46% → 19h00 (3h20m)` | Rate limit usage, reset time, countdown |
-| **Sonnet weekly** | `🟡 ▓▓▓░░░░░ 42% Snt` | Weekly Sonnet-specific quota usage |
-| **Weekly** | `🔴 ▓▓▓▓▓░░░ 59% (mon 14h)` | Weekly quota usage, next reset |
+| **Session** | `⏳ 🟡 ▓▓▓░░░░░ 46% → 19h00 (3h20m)` | Rate limit usage, reset time, countdown |
+| **Weekly + Sonnet** | `📅 🟡 42% / Snt 🔴 59% ↻ mon 14h` | Weekly quota + Sonnet-specific quota, next reset |
 | **Context** | `🟢 Ctx ▓▓░░░░░░ 34%` | Context window usage |
+| **Refresh timer** | `🔄 5m` | Minutes until next `/usage` scrape |
 | **Model** | `🤖 Sonnet 4.6` | Active Claude model |
 | **Branch** | `🌿 main` | Current git branch |
 
@@ -31,7 +31,7 @@ Every 10 minutes (configurable), the script silently launches a **background tmu
 
 The cached data (`~/.claude/usage-exact.json`) is then read on each status line render to display up-to-date rate limit info. Timezone is automatically extracted from the `/usage` output for correct display regardless of your server's location.
 
-A ⚠ indicator appears next to usage metrics when cached data is older than twice the refresh interval, so you know the data might be outdated.
+A 🔄 countdown shows minutes until the next scrape. When it switches to ⚠, cached data is stale and a refresh is pending.
 
 The background scraper has a global 120-second timeout to prevent zombie tmux sessions from accumulating.
 
