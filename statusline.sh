@@ -14,7 +14,7 @@
 
 # ── Configuration (override via environment variables) ────────────────────────
 TIMEZONE="${TIMEZONE:-}"                           # e.g. "America/New_York", empty = system default
-REFRESH_INTERVAL="${REFRESH_INTERVAL:-600}"         # seconds between usage scrapes (default: 10min)
+REFRESH_INTERVAL="${REFRESH_INTERVAL:-600}"         # seconds between usage scrapes (customizable via install.sh --refresh N)
 USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
 LOCK_FILE="${LOCK_FILE:-/tmp/claude-usage-refresh.lock}"
 TMUX_SESSION="${TMUX_SESSION:-claude-usage-bg}"
@@ -77,8 +77,13 @@ CTX_BAR="$BAR_STR"
 # ── Git branch for the current workspace ─────────────────────────────────────
 CWD=$(echo "$JSON" | jq -r '.workspace.current_dir // ""' 2>/dev/null)
 BRANCH=""
+DIRTY=""
 if [ -n "$CWD" ] && [ -d "$CWD" ]; then
     BRANCH=$(git -C "$CWD" --no-optional-locks symbolic-ref --short HEAD 2>/dev/null)
+    # Check if there are uncommitted changes
+    if [ -n "$BRANCH" ] && git -C "$CWD" --no-optional-locks status --porcelain 2>/dev/null | grep -q .; then
+        DIRTY="★"
+    fi
 fi
 [ -z "$BRANCH" ] && BRANCH="(no git)"
 [ ${#BRANCH} -gt 33 ] && BRANCH="${BRANCH:0:30}..."
@@ -238,8 +243,7 @@ fi
 
 # ── Read cached usage metrics ─────────────────────────────────────────────────
 BLOCK_DISPLAY=""
-WEEK_DISPLAY=""
-SONNET_DISPLAY=""
+WEEK_SONNET_DISPLAY=""
 
 if [ -f "$USAGE_FILE" ]; then
     mapfile -t uvals < <(jq -r '
@@ -281,11 +285,11 @@ if [ -f "$USAGE_FILE" ]; then
 
         make_bar "$SESS_INT"
         if [ -n "$RESET_TIME" ] && [ -n "$REMAIN_STR" ]; then
-            BLOCK_DISPLAY="${BAR_COLOR} ${BAR_STR} ${SESS_INT}% → ${RESET_TIME} (${REMAIN_STR})"
+            BLOCK_DISPLAY="⏳ ${BAR_COLOR} ${BAR_STR} ${SESS_INT}% → ${RESET_TIME} (${REMAIN_STR})"
         elif [ -n "$RESET_TIME" ]; then
-            BLOCK_DISPLAY="${BAR_COLOR} ${BAR_STR} ${SESS_INT}% → ${RESET_TIME}"
+            BLOCK_DISPLAY="⏳ ${BAR_COLOR} ${BAR_STR} ${SESS_INT}% → ${RESET_TIME}"
         else
-            BLOCK_DISPLAY="${BAR_COLOR} ${BAR_STR} ${SESS_INT}%"
+            BLOCK_DISPLAY="⏳ ${BAR_COLOR} ${BAR_STR} ${SESS_INT}%"
         fi
     fi
 
@@ -307,43 +311,57 @@ if [ -f "$USAGE_FILE" ]; then
         fi
 
         make_bar "$WEEK_INT"
-        [ -n "$WEEK_RESET_LABEL" ] \
-            && WEEK_DISPLAY="${BAR_COLOR} ${BAR_STR} ${WEEK_INT}% (${WEEK_RESET_LABEL})" \
-            || WEEK_DISPLAY="${BAR_COLOR} ${BAR_STR} ${WEEK_INT}%"
+        WEEK_COLOR="$BAR_COLOR"
     fi
 
     # ── Sonnet weekly block: "🟢 ▓▓░░░░░░ XX% Snt" ───────────────────────────
     if [ -n "$U_SONNET_PCT" ] && [ "$U_SONNET_PCT" != "null" ]; then
         SONNET_INT="${U_SONNET_PCT%.*}"
         make_bar "$SONNET_INT"
-        SONNET_DISPLAY="${BAR_COLOR} ${BAR_STR} ${SONNET_INT}% Snt"
+        SONNET_COLOR="$BAR_COLOR"
+    fi
+
+    # ── Combined weekly + sonnet block ────────────────────────────────────────
+    if [ -n "$WEEK_INT" ] && [ -n "$SONNET_INT" ]; then
+        if [ -n "$WEEK_RESET_LABEL" ]; then
+            WEEK_SONNET_DISPLAY="📅 ${WEEK_COLOR} ${WEEK_INT}% / Snt ${SONNET_COLOR} ${SONNET_INT}% ↻ ${WEEK_RESET_LABEL}"
+        else
+            WEEK_SONNET_DISPLAY="📅 ${WEEK_COLOR} ${WEEK_INT}% / Snt ${SONNET_COLOR} ${SONNET_INT}%"
+        fi
+    elif [ -n "$WEEK_INT" ]; then
+        if [ -n "$WEEK_RESET_LABEL" ]; then
+            WEEK_SONNET_DISPLAY="📅 ${WEEK_COLOR} ${WEEK_INT}% ↻ ${WEEK_RESET_LABEL}"
+        else
+            WEEK_SONNET_DISPLAY="📅 ${WEEK_COLOR} ${WEEK_INT}%"
+        fi
+    elif [ -n "$SONNET_INT" ]; then
+        WEEK_SONNET_DISPLAY="Snt ${SONNET_COLOR} ${SONNET_INT}%"
     fi
 fi
 
-# ── Stale cache indicator ─────────────────────────────────────────────────────
-STALE_SUFFIX=""
+# ── Refresh countdown / stale indicator ───────────────────────────────────────
+REFRESH_SUFFIX=""
 if [ -f "$USAGE_FILE" ]; then
     AGE=$(cache_age_sec)
-    if [ "$AGE" -gt $(( REFRESH_INTERVAL * 2 )) ]; then
-        STALE_SUFFIX=" ⚠"
+    REMAINING=$(( REFRESH_INTERVAL - AGE ))
+    if [ "$REMAINING" -gt 0 ]; then
+        REFRESH_SUFFIX=" 🔄 $(( REMAINING / 60 ))m"
+    else
+        REFRESH_SUFFIX=" ⚠"
     fi
 fi
-[ -n "$BLOCK_DISPLAY"  ] && BLOCK_DISPLAY="${BLOCK_DISPLAY}${STALE_SUFFIX}"
-[ -n "$WEEK_DISPLAY"   ] && WEEK_DISPLAY="${WEEK_DISPLAY}${STALE_SUFFIX}"
-[ -n "$SONNET_DISPLAY" ] && SONNET_DISPLAY="${SONNET_DISPLAY}${STALE_SUFFIX}"
 
 # ── Assemble the final status line, joining parts with " │ " ─────────────────
 PARTS=()
-[ -n "$BRANCH" ]          && PARTS+=("🌿 $BRANCH")
+[ -n "$BRANCH" ]          && PARTS+=("🌿 $BRANCH$DIRTY")
 [ -n "$MODEL" ]           && PARTS+=("🤖 $MODEL")
 [ -n "$CTX_PERCENT" ]     && PARTS+=("$CTX_COLOR Ctx $CTX_BAR ${CTX_PERCENT}%")
-[ -n "$BLOCK_DISPLAY" ]   && PARTS+=("$BLOCK_DISPLAY")
-# [ -n "$SONNET_DISPLAY" ]  && PARTS+=("$SONNET_DISPLAY")  # Removed: takes too much space
-# [ -n "$WEEK_DISPLAY" ]    && PARTS+=("$WEEK_DISPLAY")  # Removed: takes too much space
+[ -n "$BLOCK_DISPLAY" ]        && PARTS+=("$BLOCK_DISPLAY")
+[ -n "$WEEK_SONNET_DISPLAY" ]  && PARTS+=("$WEEK_SONNET_DISPLAY")
 
 RESULT=""
 for part in "${PARTS[@]}"; do
     [ -z "$RESULT" ] && RESULT="$part" || RESULT="$RESULT │ $part"
 done
 
-echo "$RESULT"
+echo "${RESULT}${REFRESH_SUFFIX}"

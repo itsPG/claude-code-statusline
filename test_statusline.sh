@@ -180,7 +180,7 @@ JSON
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 0}}' \
     USAGE_FILE="$USAGE_TMP" REFRESH_INTERVAL=999999)
 assert_contains     "session 46% shown"            "46%" "$OUT"
-assert_not_contains "week bar no longer displayed" "59%" "$OUT"
+assert_contains     "week_all 59% shown"           "59%" "$OUT"
 
 # Test 4 — Cache stale (30 minutes old, REFRESH_INTERVAL=300 → stale threshold 600s)
 echo ""
@@ -249,8 +249,8 @@ cat > "$USAGE_SNT" <<'JSON'
 JSON
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 0}}' \
     USAGE_FILE="$USAGE_SNT" REFRESH_INTERVAL=999999)
-assert_not_contains "week_sonnet 72% not shown" "72%" "$OUT"
-assert_not_contains "week_sonnet Snt not shown" "Snt" "$OUT"
+assert_contains "week_sonnet 72% shown" "72%" "$OUT"
+assert_contains "week_sonnet Snt shown" "Snt" "$OUT"
 
 # Test 7 — Haiku model detection
 echo ""
@@ -314,8 +314,8 @@ JSON
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 10}}' \
     USAGE_FILE="$USAGE_ALL" REFRESH_INTERVAL=999999)
 assert_contains     "session 30%"              "30%" "$OUT"
-assert_not_contains "week_all 60% not shown"   "60%" "$OUT"
-assert_not_contains "week_sonnet 45% not shown" "45%" "$OUT"
+assert_contains     "week_all 60% shown"        "60%" "$OUT"
+assert_contains     "week_sonnet 45% shown"     "45%" "$OUT"
 assert_contains     "separator present"         "│"   "$OUT"
 
 # Test 16 — Display name parenthetical stripped
