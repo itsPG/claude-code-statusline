@@ -40,6 +40,21 @@ case "$MODEL" in
   claude-haiku-4*|Haiku\ 4*)       MODEL="Haiku 4"  ;;
 esac
 
+# ── Effort level (from settings.json — not yet in stdin JSON) ────────────────
+EFFORT=""
+SETTINGS_FILE="$HOME/.claude/settings.json"
+if [ -f "$SETTINGS_FILE" ]; then
+    EFFORT=$(jq -r '.effortLevel // empty' "$SETTINGS_FILE" 2>/dev/null)
+fi
+# Compact label
+case "$EFFORT" in
+    low)    EFFORT_LABEL="lo" ;;
+    medium) EFFORT_LABEL="md" ;;
+    high)   EFFORT_LABEL="hi" ;;
+    max)    EFFORT_LABEL="mx" ;;
+    *)      EFFORT_LABEL="" ;;
+esac
+
 # ── Context window usage percentage ──────────────────────────────────────────
 CTX_PERCENT=$(echo "$JSON" | jq -r '.context_window.used_percentage // 0' 2>/dev/null | cut -d. -f1)
 CTX_PERCENT=${CTX_PERCENT:-0}
@@ -284,7 +299,11 @@ fi
 # ── Assemble the final status line ───────────────────────────────────────────
 PARTS=()
 [ -n "$BRANCH" ]               && PARTS+=("🌿 $BRANCH$DIRTY")
-[ -n "$MODEL" ]                && PARTS+=("$MODEL")
+if [ -n "$MODEL" ] && [ -n "$EFFORT_LABEL" ]; then
+    PARTS+=("$MODEL/$EFFORT_LABEL")
+elif [ -n "$MODEL" ]; then
+    PARTS+=("$MODEL")
+fi
 [ -n "$CTX_PERCENT" ]          && PARTS+=("$CTX_COLOR Ctx $CTX_BAR ${CTX_PERCENT}%")
 [ -n "$BLOCK_DISPLAY" ]        && PARTS+=("$BLOCK_DISPLAY")
 [ -n "$WEEK_SONNET_DISPLAY" ]  && PARTS+=("$WEEK_SONNET_DISPLAY")
