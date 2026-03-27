@@ -53,8 +53,8 @@ make_bar() {
     local pct="$1"
     [ "$pct" -lt 0 ] 2>/dev/null && pct=0
     [ "$pct" -gt 100 ] 2>/dev/null && pct=100
-    local filled=$(( (pct + 19) / 20 )); [ $filled -gt 5 ] && filled=5
-    local empty=$(( 5 - filled ))
+    local filled=$(( (pct + 16) / 17 )); [ $filled -gt 6 ] && filled=6
+    local empty=$(( 6 - filled ))
     BAR_STR=""
     local i
     for ((i=0; i<filled; i++)); do BAR_STR+="▓"; done
@@ -265,7 +265,7 @@ fi
 [ -n "$WEEK_SONNET_DISPLAY" ] && PARTS+=("$WEEK_SONNET_DISPLAY")
 # Cost + duration (only if non-zero)
 if [ -n "$COST_STR" ] && [ -n "$DURATION_STR" ]; then
-    PARTS+=("$COST_STR $DURATION_STR")
+    PARTS+=("$COST_STR ⏱ $DURATION_STR")
 elif [ -n "$COST_STR" ]; then
     PARTS+=("$COST_STR")
 fi
