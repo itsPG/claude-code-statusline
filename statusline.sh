@@ -207,6 +207,7 @@ if [ -f "$USAGE_FILE" ]; then
         if [ -n "$U_SESS_PCT" ] && [ "$U_SESS_PCT" != "null" ]; then
             SESS_INT="${U_SESS_PCT%.*}"
             REMAIN_STR=""
+            RESET_EPOCH=""
             if [ -n "$U_SESS_RESETS" ] && [ "$U_SESS_RESETS" != "null" ]; then
                 if [ "$CACHE_SOURCE" = "api" ]; then
                     RESET_EPOCH=$(iso_to_epoch "$U_SESS_RESETS")
@@ -218,8 +219,12 @@ if [ -f "$USAGE_FILE" ]; then
                     [ -n "$RESET_EPOCH" ] && [ "$RESET_EPOCH" -le "$NOW" ] && \
                         RESET_EPOCH=$(tz_date "${RESET_TZ}" -d "tomorrow $RESET_TIME_STR" +%s 2>/dev/null)
                 fi
-                [ -n "$RESET_EPOCH" ] && [ "$RESET_EPOCH" -gt "$NOW" ] && \
+                if [ -n "$RESET_EPOCH" ] && [ "$RESET_EPOCH" -gt "$NOW" ]; then
                     REMAIN_STR=$(format_remaining $(( RESET_EPOCH - NOW )))
+                elif [ -n "$RESET_EPOCH" ] && [ "$RESET_EPOCH" -le "$NOW" ]; then
+                    # Session has reset since last API call — usage is back to ~0%
+                    SESS_INT=0
+                fi
             fi
             make_bar "$SESS_INT"
             if [ -n "$REMAIN_STR" ]; then
