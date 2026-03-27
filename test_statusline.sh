@@ -52,7 +52,6 @@ echo ""
 echo "=== Unit tests: make_bar ==="
 
 # Extract make_bar function from statusline.sh and source it
-# Use awk to extract just the function body (up to the closing brace)
 eval "$(awk '/^make_bar\(\)/,/^\}/' "$STATUSLINE_SH")"
 
 run_make_bar() {
@@ -60,40 +59,40 @@ run_make_bar() {
     make_bar "$1"
 }
 
-# pct=0 → 8 empty blocks
+# Count unicode characters (no python dependency)
+count_char() {
+    local char="$1" str="$2"
+    echo -n "$str" | grep -o "$char" | wc -l
+}
+
+# pct=0 → 5 empty blocks
 run_make_bar 0
-assert_eq "pct=0: BAR_STR is 8 empty blocks" "░░░░░░░░" "$BAR_STR"
+assert_eq "pct=0: BAR_STR is 5 empty blocks" "░░░░░" "$BAR_STR"
 
-# pct=100 → 8 full blocks
+# pct=100 → 5 full blocks
 run_make_bar 100
-assert_eq "pct=100: BAR_STR is 8 full blocks" "▓▓▓▓▓▓▓▓" "$BAR_STR"
+assert_eq "pct=100: BAR_STR is 5 full blocks" "▓▓▓▓▓" "$BAR_STR"
 
-# pct=50 → 4 full + 4 empty
+# pct=50 → 3 full blocks
 run_make_bar 50
-FULL_COUNT=$(echo -n "$BAR_STR" | python3 -c "import sys; s=sys.stdin.buffer.read().decode('utf-8'); print(s.count('▓'))")
-EMPTY_COUNT=$(echo -n "$BAR_STR" | python3 -c "import sys; s=sys.stdin.buffer.read().decode('utf-8'); print(s.count('░'))")
-assert_eq "pct=50: 4 full blocks" "4" "$FULL_COUNT"
-assert_eq "pct=50: 4 empty blocks" "4" "$EMPTY_COUNT"
+FULL_COUNT=$(count_char "▓" "$BAR_STR")
+EMPTY_COUNT=$(count_char "░" "$BAR_STR")
+TOTAL=$((FULL_COUNT + EMPTY_COUNT))
+assert_eq "pct=50: total bar length 5" "5" "$TOTAL"
+assert_eq "pct=50: 3 full blocks" "3" "$FULL_COUNT"
 
-# pct=25 → 2 full + 6 empty
+# pct=25 → 2 full blocks
 run_make_bar 25
-FULL_COUNT=$(echo -n "$BAR_STR" | python3 -c "import sys; s=sys.stdin.buffer.read().decode('utf-8'); print(s.count('▓'))")
-EMPTY_COUNT=$(echo -n "$BAR_STR" | python3 -c "import sys; s=sys.stdin.buffer.read().decode('utf-8'); print(s.count('░'))")
+FULL_COUNT=$(count_char "▓" "$BAR_STR")
 assert_eq "pct=25: 2 full blocks" "2" "$FULL_COUNT"
-assert_eq "pct=25: 6 empty blocks" "6" "$EMPTY_COUNT"
 
-# Total bar length is always 8
-run_make_bar 0
-TOTAL=$(echo -n "$BAR_STR" | python3 -c "import sys; s=sys.stdin.buffer.read().decode('utf-8'); print(len(s))")
-assert_eq "pct=0: total bar length 8" "8" "$TOTAL"
-
-run_make_bar 100
-TOTAL=$(echo -n "$BAR_STR" | python3 -c "import sys; s=sys.stdin.buffer.read().decode('utf-8'); print(len(s))")
-assert_eq "pct=100: total bar length 8" "8" "$TOTAL"
-
-run_make_bar 50
-TOTAL=$(echo -n "$BAR_STR" | python3 -c "import sys; s=sys.stdin.buffer.read().decode('utf-8'); print(len(s))")
-assert_eq "pct=50: total bar length 8" "8" "$TOTAL"
+# Total bar length is always 5
+for pct in 0 1 20 50 75 99 100; do
+    run_make_bar $pct
+    TOTAL=$(count_char "▓" "$BAR_STR")
+    TOTAL=$((TOTAL + $(count_char "░" "$BAR_STR")))
+    assert_eq "pct=$pct: total bar length 5" "5" "$TOTAL"
+done
 
 # Color thresholds
 run_make_bar 0
@@ -105,6 +104,9 @@ assert_eq "pct=49:  BAR_COLOR is green"  "🟢" "$BAR_COLOR"
 run_make_bar 50
 assert_eq "pct=50:  BAR_COLOR is yellow" "🟡" "$BAR_COLOR"
 
+run_make_bar 79
+assert_eq "pct=79:  BAR_COLOR is yellow" "🟡" "$BAR_COLOR"
+
 run_make_bar 80
 assert_eq "pct=80:  BAR_COLOR is red"    "🔴" "$BAR_COLOR"
 
@@ -112,12 +114,11 @@ run_make_bar 100
 assert_eq "pct=100: BAR_COLOR is red"    "🔴" "$BAR_COLOR"
 
 echo ""
-echo "-- Test 11: make_bar boundary 79% is yellow --"
-run_make_bar 79
-assert_eq "pct=79: BAR_COLOR is yellow" "🟡" "$BAR_COLOR"
+echo "-- Edge cases: clamping --"
+run_make_bar 0
+assert_eq "pct=0: all empty" "░░░░░" "$BAR_STR"
+assert_eq "pct=0: green" "🟢" "$BAR_COLOR"
 
-echo ""
-echo "-- Test 12: make_bar 1% has at least 1 filled block --"
 run_make_bar 1
 assert_contains "pct=1: has filled block" "▓" "$BAR_STR"
 
@@ -129,7 +130,7 @@ echo "=== Integration tests ==="
 run_statusline() {
     local json="$1"
     shift
-    echo "$json" | env "$@" bash "$STATUSLINE_SH" 2>/dev/null
+    echo "$json" | env "$@" CREDENTIALS_FILE=/dev/null bash "$STATUSLINE_SH" 2>/dev/null
 }
 
 # Test 1 — model + context window
@@ -137,7 +138,7 @@ echo ""
 echo "-- Test 1: model + context window --"
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 34.5}}' \
     USAGE_FILE=/dev/null)
-assert_contains "contains 'Sonnet 4.6'" "Sonnet 4.6" "$OUT"
+assert_contains "contains model name" "Snt 4.6" "$OUT"
 assert_contains "contains '34%'" "34%" "$OUT"
 
 # Test 2 — Opus model + git branch
@@ -154,9 +155,9 @@ else
     echo "  (skipped: not in a git repo or branch not detectable)"
 fi
 
-# Test 3 — Usage cache: session + week_all displayed
+# Test 3 — Legacy usage cache: session + week_all displayed
 echo ""
-echo "-- Test 3: usage cache with session + week_all --"
+echo "-- Test 3: legacy cache with session + week_all --"
 USAGE_TMP=$(mktemp /tmp/test-usage-XXXX.json)
 TMPFILES+=("$USAGE_TMP")
 cat > "$USAGE_TMP" <<'JSON'
@@ -178,149 +179,184 @@ cat > "$USAGE_TMP" <<'JSON'
 }
 JSON
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 0}}' \
-    USAGE_FILE="$USAGE_TMP" REFRESH_INTERVAL=999999)
+    USAGE_FILE="$USAGE_TMP" REFRESH_INTERVAL=999999 SHOW_WEEKLY=1)
 assert_contains     "session 46% shown"            "46%" "$OUT"
 assert_contains     "week_all 59% shown"           "59%" "$OUT"
 
-# Test 4 — Cache stale (30 minutes old, REFRESH_INTERVAL=300 → stale threshold 600s)
+# Test 4 — API format cache with ISO 8601 resets_at
 echo ""
-echo "-- Test 4: stale cache shows ⚠ --"
+echo "-- Test 4: API cache with ISO 8601 resets_at --"
+USAGE_API=$(mktemp /tmp/test-usage-api-XXXX.json)
+TMPFILES+=("$USAGE_API")
+# Use a future reset time
+FUTURE=$(date -d "+3 hours" -Iseconds 2>/dev/null || date -v+3H -Iseconds 2>/dev/null)
+cat > "$USAGE_API" <<JSON
+{
+  "timestamp": "2026-02-21T10:00:00Z",
+  "source": "api",
+  "metrics": {
+    "session": {
+      "percent_used": 35.0,
+      "percent_remaining": 65.0,
+      "resets_at": "$FUTURE"
+    },
+    "week_all": {
+      "percent_used": 22.0,
+      "percent_remaining": 78.0,
+      "resets_at": "2026-04-02T13:00:00+00:00"
+    },
+    "week_sonnet": {
+      "percent_used": 15.0,
+      "percent_remaining": 85.0,
+      "resets_at": "2026-04-02T13:00:00+00:00"
+    }
+  }
+}
+JSON
+OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 0}}' \
+    USAGE_FILE="$USAGE_API" REFRESH_INTERVAL=999999 SHOW_WEEKLY=1)
+assert_contains     "API session 35% shown"        "35%" "$OUT"
+assert_contains     "API week_all 22% shown"       "22%" "$OUT"
+assert_contains     "API week_sonnet 15% shown"    "15%" "$OUT"
+assert_contains     "has countdown"                "h"   "$OUT"
+
+# Test 5 — Stale cache shows ⚠
+echo ""
+echo "-- Test 5: stale cache shows ⚠ --"
 USAGE_STALE=$(mktemp /tmp/test-usage-stale-XXXX.json)
 TMPFILES+=("$USAGE_STALE")
 cat > "$USAGE_STALE" <<'JSON'
 {
   "timestamp": "2026-02-21T09:00:00+00:00",
-  "source": "/usage",
+  "source": "api",
   "metrics": {
     "session": {
       "percent_used": 30.0,
       "percent_remaining": 70.0,
-      "resets": null
+      "resets_at": null
     }
   }
 }
 JSON
-# Touch the file with a timestamp 30 minutes ago
 touch -d '30 minutes ago' "$USAGE_STALE"
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 0}}' \
     USAGE_FILE="$USAGE_STALE" REFRESH_INTERVAL=300)
 assert_contains "stale cache shows ⚠" "⚠" "$OUT"
 
-# Test 5 — Fresh cache does NOT show ⚠
+# Test 6 — Fresh cache does NOT show ⚠
 echo ""
-echo "-- Test 5: fresh cache does NOT show ⚠ --"
+echo "-- Test 6: fresh cache does NOT show ⚠ --"
 USAGE_FRESH=$(mktemp /tmp/test-usage-fresh-XXXX.json)
 TMPFILES+=("$USAGE_FRESH")
 cat > "$USAGE_FRESH" <<'JSON'
 {
   "timestamp": "2026-02-21T10:00:00+00:00",
-  "source": "/usage",
+  "source": "api",
   "metrics": {
     "session": {
       "percent_used": 20.0,
       "percent_remaining": 80.0,
-      "resets": null
+      "resets_at": null
     }
   }
 }
 JSON
-# File freshly created (now)
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 0}}' \
     USAGE_FILE="$USAGE_FRESH" REFRESH_INTERVAL=300)
 assert_not_contains "fresh cache does not show ⚠" "⚠" "$OUT"
 
-# Test 6 — week_sonnet bar is no longer displayed
+# Test 7 — week_sonnet shown
 echo ""
-echo "-- Test 6: week_sonnet bar no longer displayed --"
+echo "-- Test 7: week_sonnet shown --"
 USAGE_SNT=$(mktemp /tmp/test-usage-snt-XXXX.json)
 TMPFILES+=("$USAGE_SNT")
 cat > "$USAGE_SNT" <<'JSON'
 {
   "timestamp": "2026-02-21T10:00:00+00:00",
-  "source": "/usage",
+  "source": "api",
   "metrics": {
     "week_sonnet": {
       "percent_used": 72.0,
       "percent_remaining": 28.0,
-      "resets": null
+      "resets_at": null
     }
   }
 }
 JSON
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 0}}' \
-    USAGE_FILE="$USAGE_SNT" REFRESH_INTERVAL=999999)
+    USAGE_FILE="$USAGE_SNT" REFRESH_INTERVAL=999999 SHOW_WEEKLY=1)
 assert_contains "week_sonnet 72% shown" "72%" "$OUT"
 assert_contains "week_sonnet Snt shown" "Snt" "$OUT"
 
-# Test 7 — Haiku model detection
+# Test 8 — Haiku model detection
 echo ""
-echo "-- Test 7: Haiku model detection --"
+echo "-- Test 8: Haiku model detection --"
 OUT=$(run_statusline '{"model": "claude-haiku-4-5-20251001", "context_window": {"used_percentage": 10}}' \
     USAGE_FILE=/dev/null)
 assert_contains "contains 'Haiku 4'" "Haiku 4" "$OUT"
 
-# Test 8 — Display name with "Default (...)" wrapper
+# Test 9 — Display name with "Default (...)" wrapper
 echo ""
-echo "-- Test 8: display_name Default() unwrap --"
+echo "-- Test 9: display_name Default() unwrap --"
 OUT=$(run_statusline '{"model": {"display_name": "Default (Claude Sonnet 4.5)"}, "context_window": {"used_percentage": 0}}' \
     USAGE_FILE=/dev/null)
-assert_contains "unwraps Default() to 'Sonnet 4.5'" "Sonnet 4.5" "$OUT"
+assert_contains "unwraps Default() to 'Snt 4.5'" "Snt 4.5" "$OUT"
 
-# Test 9 — Context bar at 0% is all empty blocks
+# Test 10 — Context bar at 0% is all empty blocks
 echo ""
-echo "-- Test 9: context bar at 0% --"
+echo "-- Test 10: context bar at 0% --"
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 0}}' \
     USAGE_FILE=/dev/null)
-assert_contains "0% bar is all empty" "░░░░░░░░" "$OUT"
+assert_contains "0% bar is all empty" "░░░░░" "$OUT"
 
-# Test 10 — Context bar at 100% is all full blocks
+# Test 11 — Context bar at 100% is all full blocks
 echo ""
-echo "-- Test 10: context bar at 100% --"
+echo "-- Test 11: context bar at 100% --"
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 100}}' \
     USAGE_FILE=/dev/null)
-assert_contains "100% bar is all full" "▓▓▓▓▓▓▓▓" "$OUT"
+assert_contains "100% bar is all full" "▓▓▓▓▓" "$OUT"
 
-# Test 13 — Missing usage file shows no usage data
+# Test 12 — Missing usage file shows no usage data
 echo ""
-echo "-- Test 13: missing usage file shows no usage bars --"
+echo "-- Test 12: missing usage file shows no usage bars --"
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 20}}' \
     USAGE_FILE=/tmp/nonexistent-file-xxxxx.json)
-assert_not_contains "no Snt label without cache" "Snt" "$OUT"
+assert_not_contains "no usage bars without cache" "⏳" "$OUT"
+assert_not_contains "no weekly bars without cache" "📅" "$OUT"
 
-# Test 14 — Branch emoji always present
+# Test 13 — Branch emoji always present
 echo ""
-echo "-- Test 14: branch emoji present --"
-REPO_DIR="$(dirname "$(realpath "$0")")"
+echo "-- Test 13: branch emoji present --"
 OUT=$(run_statusline "{\"model\": \"claude-sonnet-4-6\", \"context_window\": {\"used_percentage\": 0}, \"workspace\": {\"current_dir\": \"$REPO_DIR\"}}" \
     USAGE_FILE=/dev/null)
 assert_contains "branch emoji present" "🌿" "$OUT"
 
-# Test 15 — Session metric displayed; week bars no longer shown
+# Test 14 — All three metrics displayed together
 echo ""
-echo "-- Test 15: session shown, week bars no longer displayed --"
+echo "-- Test 14: session + week + sonnet all shown --"
 USAGE_ALL=$(mktemp /tmp/test-usage-all-XXXX.json)
 TMPFILES+=("$USAGE_ALL")
 cat > "$USAGE_ALL" <<'JSON'
 {
   "timestamp": "2026-02-21T10:00:00+00:00",
-  "source": "/usage",
+  "source": "api",
   "metrics": {
-    "session": {"percent_used": 30.0, "percent_remaining": 70.0, "resets": null},
-    "week_all": {"percent_used": 60.0, "percent_remaining": 40.0, "resets": null},
-    "week_sonnet": {"percent_used": 45.0, "percent_remaining": 55.0, "resets": null}
+    "session": {"percent_used": 30.0, "percent_remaining": 70.0, "resets_at": null},
+    "week_all": {"percent_used": 60.0, "percent_remaining": 40.0, "resets_at": null},
+    "week_sonnet": {"percent_used": 45.0, "percent_remaining": 55.0, "resets_at": null}
   }
 }
 JSON
 OUT=$(run_statusline '{"model": "claude-sonnet-4-6", "context_window": {"used_percentage": 10}}' \
-    USAGE_FILE="$USAGE_ALL" REFRESH_INTERVAL=999999)
+    USAGE_FILE="$USAGE_ALL" REFRESH_INTERVAL=999999 SHOW_WEEKLY=1)
 assert_contains     "session 30%"              "30%" "$OUT"
-assert_contains     "week_all 60% shown"        "60%" "$OUT"
-assert_contains     "week_sonnet 45% shown"     "45%" "$OUT"
-assert_contains     "separator present"         "│"   "$OUT"
+assert_contains     "week_all 60% shown"       "60%" "$OUT"
+assert_contains     "week_sonnet 45% shown"    "45%" "$OUT"
+assert_contains     "separator present"        "│"   "$OUT"
 
-# Test 16 — Display name parenthetical stripped
+# Test 15 — Display name parenthetical stripped
 echo ""
-echo "-- Test 16: display_name strips parenthetical --"
+echo "-- Test 15: display_name strips parenthetical --"
 OUT=$(run_statusline '{"model": {"display_name": "Claude Opus 4.6 (some info)"}, "context_window": {"used_percentage": 0}}' \
     USAGE_FILE=/dev/null)
 assert_contains "shows 'Opus 4.6'" "Opus 4.6" "$OUT"

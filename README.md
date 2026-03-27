@@ -1,39 +1,57 @@
 # claude-code-statusline
 
-**Know your Claude Code rate limits in real time.** No more guessing when your session or weekly quota resets — see your actual `/usage` data live in the status bar.
+**Know your Claude Code rate limits in real time.** No more guessing when your session or weekly quota resets — see your actual usage data live in the status bar.
 
 ```
-🌿 main │ 🤖 Sonnet 4.6 │ 🟢 Ctx ▓▓░░░░░░ 34% │ ⏳ 🟡 ▓▓▓░░░░░ 46% → 19h00 (3h20m) │ 📅 🟡 42% / Snt 🔴 59% ↻ mon 14h 🔄 5m
+🌿 main★ │ Opus 4.6 │ 🟢 Ctx ▓▓▓░░ 42% │ ⏳ 🟡 ▓▓░░░ 35% ↻ 2h30m
 ```
 
 ## Why?
 
 Claude Code has rate limits but no built-in way to see them while you work. The `/usage` command exists, but you have to stop what you're doing to check it manually.
 
-This script **automatically scrapes `/usage` in the background** and displays the results directly in your status line — session rate limit, weekly quota, reset countdown, all updated every 10 minutes.
+This script **fetches your usage via API every 60 seconds** and displays the results directly in your status line — session rate limit with reset countdown, all at a glance.
 
 ## What you get
 
-All three metrics use color-coded progress bars: 🟢 under 50% | 🟡 50-80% | 🔴 over 80%
+Color-coded progress bars: 🟢 under 50% │ 🟡 50-80% │ 🔴 over 80%
 
 | Segment | Example | Description |
 |---------|---------|-------------|
-| **Session** | `⏳ 🟡 ▓▓▓░░░░░ 46% → 19h00 (3h20m)` | Rate limit usage, reset time, countdown |
-| **Weekly + Sonnet** | `📅 🟡 42% / Snt 🔴 59% ↻ mon 14h` | Weekly quota + Sonnet-specific quota, next reset |
-| **Context** | `🟢 Ctx ▓▓░░░░░░ 34%` | Context window usage |
-| **Refresh timer** | `🔄 5m` | Minutes until next `/usage` scrape |
-| **Model** | `🤖 Sonnet 4.6` | Active Claude model |
-| **Branch** | `🌿 main` | Current git branch |
+| **Git** | `🌿 main★` | Current branch + `★` if dirty |
+| **Model** | `Opus 4.6` | Active Claude model |
+| **Context** | `🟢 Ctx ▓▓▓░░ 42%` | Context window fill level |
+| **Session** | `⏳ 🟡 ▓▓░░░ 35% ↻ 2h30m` | 5-hour session quota + time until reset |
+
+With `SHOW_WEEKLY=1`:
+
+```
+🌿 main★ │ Opus 4.6 │ 🟢 Ctx ▓▓▓░░ 42% │ ⏳ 🟡 ▓▓░░░ 35% ↻ 2h30m │ 📅 🟢 17% / Snt 🟢 10% ↻ thu 13h
+```
+
+| Segment | Example | Description |
+|---------|---------|-------------|
+| **Weekly** | `📅 🟢 17% / Snt 🟢 10% ↻ thu 13h` | Weekly all-models + Sonnet quotas, reset day |
 
 ## How it works
 
-Every 10 minutes (configurable), the script silently launches a **background tmux session**, opens Claude Code, runs `/usage`, parses the output, and caches the result. Your active session is never interrupted — the scraping happens in a completely separate process.
+```
+Claude Code → JSON stdin → statusline.sh → formatted status string
+                              ↓ (if cache > 60s old)
+                         curl → Anthropic OAuth API → ~/.claude/usage-exact.json
+```
 
-The cached data (`~/.claude/usage-exact.json`) is then read on each status line render to display up-to-date rate limit info. Timezone is automatically extracted from the `/usage` output for correct display regardless of your server's location.
+Every 60 seconds (configurable), the script calls the Anthropic usage API with your OAuth token. The call takes ~200ms and runs inline — no background processes, no tmux, no scraping.
 
-A 🔄 countdown shows minutes until the next scrape. When it switches to ⚠, cached data is stale and a refresh is pending.
+The OAuth token is read from `~/.claude/.credentials.json`, which Claude Code maintains automatically during active sessions. If the token is expired or the API is unreachable, the script silently falls back to cached data or displays without usage info.
 
-The background scraper has a global 120-second timeout to prevent zombie tmux sessions from accumulating.
+### About the Usage API
+
+The script uses `https://api.anthropic.com/api/oauth/usage`, an **undocumented** Anthropic endpoint discovered by the community. It returns session (5h) and weekly (7d) quota utilization as percentages with ISO 8601 reset timestamps.
+
+This is not an official API — it could change without notice. There's an open feature request for official programmatic access: [anthropics/claude-code#13585](https://github.com/anthropics/claude-code/issues/13585).
+
+If Anthropic removes this endpoint, the script degrades gracefully: you still get git, model, and context info — just no usage bars.
 
 ## Install
 
@@ -43,10 +61,10 @@ The background scraper has a global 120-second timeout to prevent zombie tmux se
 curl -fsSL https://raw.githubusercontent.com/ohugonnot/claude-code-statusline/main/install.sh | bash
 ```
 
-With custom refresh interval (e.g. every 5 minutes — minimum recommended):
+With custom refresh interval (e.g. every 2 minutes):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ohugonnot/claude-code-statusline/main/install.sh | bash -s -- --refresh 300
+curl -fsSL https://raw.githubusercontent.com/ohugonnot/claude-code-statusline/main/install.sh | bash -s -- --refresh 120
 ```
 
 ### Manual
@@ -71,17 +89,22 @@ chmod +x ~/.claude/hooks/statusline.sh
 ## Requirements
 
 - Linux, WSL, or macOS
-- `bash`, `jq`, `tmux`, `python3`
+- `bash`, `jq`, `curl` (no tmux, no python)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed
+
+> **Migrating from v1?** The old tmux+python scraper is no longer needed. Run `install.sh` to upgrade — it will clean up old tmux sessions and lock files automatically.
 
 ## Configuration
 
-Edit the top of `statusline.sh` or export in your shell profile:
+Export in your shell profile or edit the top of `statusline.sh`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TIMEZONE` | *(auto-detected)* | Override display timezone (e.g. `America/New_York`) |
-| `REFRESH_INTERVAL` | `600` | Seconds between `/usage` scrapes |
+| `REFRESH_INTERVAL` | `60` | Seconds between API calls |
+| `SHOW_WEEKLY` | `0` | Set to `1` to show weekly + Sonnet quotas |
+| `TIMEZONE` | *(system default)* | Override display timezone (e.g. `America/New_York`) |
+| `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache file path |
+| `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth credentials path |
 
 ## Testing
 
@@ -91,23 +114,32 @@ bash test_statusline.sh
 
 ## Troubleshooting
 
-**Usage bars missing on first launch?**
-Normal — the background scraper needs ~30 seconds to fetch data. Send a message and wait.
+**Usage bars missing?**
+Check that `~/.claude/.credentials.json` exists and contains a valid `claudeAiOauth.accessToken`. This file is created automatically when you log into Claude Code.
 
 **Force a refresh:**
 ```bash
-rm -f ~/.claude/usage-exact.json /tmp/claude-usage-refresh.lock
-```
-
-**Background scraper stuck:**
-```bash
-rm -f /tmp/claude-usage-refresh.lock
-tmux kill-session -t claude-usage-bg 2>/dev/null
+rm -f ~/.claude/usage-exact.json
 ```
 
 **Check cached data:**
 ```bash
-cat ~/.claude/usage-exact.json | python3 -m json.tool
+cat ~/.claude/usage-exact.json | jq .
+```
+
+**Test the API directly:**
+```bash
+TOKEN=$(jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json)
+curl -s "https://api.anthropic.com/api/oauth/usage" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "anthropic-beta: oauth-2025-04-20" | jq .
+```
+
+**Migrating from v1 (tmux scraper)?**
+Run `install.sh` — it cleans up old artifacts automatically. Or manually:
+```bash
+rm -f /tmp/claude-usage-refresh.lock /tmp/.claude-usage-scraper.sh
+tmux kill-session -t claude-usage-bg 2>/dev/null
 ```
 
 ## Uninstall

@@ -1,7 +1,7 @@
 #!/bin/bash
 # install.sh — Claude Code Status Line installer
 # Usage: bash install.sh [--refresh SECONDS]
-#    or: curl -fsSL https://raw.githubusercontent.com/ohugonnot/claude-code-statusline/main/install.sh | bash -s -- --refresh 300
+#    or: curl -fsSL https://raw.githubusercontent.com/ohugonnot/claude-code-statusline/main/install.sh | bash -s -- --refresh 120
 set -euo pipefail
 
 # Parse arguments
@@ -20,12 +20,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/dev/null}")" 2>/dev/null && pwd 
 
 echo "=== Claude Code Status Line Installer ==="
 
-# 1. Check dependencies and offer to install missing ones
+# 1. Check dependencies
 echo ""
 echo "Checking dependencies..."
 
 MISSING=()
-for dep in jq tmux python3; do
+for dep in jq curl; do
     if command -v "$dep" >/dev/null 2>&1; then
         echo "  [ok] $dep"
     else
@@ -76,43 +76,40 @@ fi
 
 echo "  Installed: $HOOKS_DIR/statusline.sh"
 
-# 3. Update settings.json
+# 3. Clean up old tmux scraper artifacts (from v1)
+echo ""
+echo "Cleaning up old tmux scraper artifacts..."
+rm -f /tmp/claude-usage-refresh.lock /tmp/.claude-usage-scraper.sh /tmp/.claude-usage-raw.txt
+tmux kill-session -t claude-usage-bg 2>/dev/null && echo "  Killed old tmux scraper session" || true
+echo "  Done"
+
+# 4. Update settings.json
 echo ""
 echo "Configuring Claude Code..."
 
 STATUS_LINE_CONFIG='{"type":"command","command":"bash ~/.claude/hooks/statusline.sh"}'
 
-SESSION_START_CONFIG='{
-  "SessionStart": [
-    {
-      "matcher": "startup|resume",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "bash ~/.claude/hooks/statusline.sh < /dev/null"
-        }
-      ]
-    }
-  ]
-}'
-
 if [ -f "$SETTINGS_FILE" ]; then
     tmp="$(mktemp)"
-    jq --argjson sl "$STATUS_LINE_CONFIG" --argjson ss "$SESSION_START_CONFIG" '
+    jq --argjson sl "$STATUS_LINE_CONFIG" '
       .statusLine = $sl |
-      .hooks = ((.hooks // {}) * $ss)
+      # Remove old SessionStart hook for statusline if present
+      if .hooks.SessionStart then
+        .hooks.SessionStart = [.hooks.SessionStart[] | select(.hooks[0].command != "bash ~/.claude/hooks/statusline.sh < /dev/null")]
+      else . end |
+      # Clean up empty SessionStart array
+      if .hooks.SessionStart == [] then del(.hooks.SessionStart) else . end |
+      if .hooks == {} then del(.hooks) else . end
     ' "$SETTINGS_FILE" > "$tmp"
     mv "$tmp" "$SETTINGS_FILE"
-    echo "  Merged statusLine + SessionStart hook into existing settings.json"
+    echo "  Updated statusLine in existing settings.json"
 else
     mkdir -p "$(dirname "$SETTINGS_FILE")"
-    jq -n --argjson sl "$STATUS_LINE_CONFIG" --argjson ss "$SESSION_START_CONFIG" '
-      {statusLine: $sl, hooks: $ss}
-    ' > "$SETTINGS_FILE"
-    echo "  Created settings.json with statusLine + SessionStart hook"
+    jq -n --argjson sl "$STATUS_LINE_CONFIG" '{statusLine: $sl}' > "$SETTINGS_FILE"
+    echo "  Created settings.json with statusLine"
 fi
 
-# 4. Done
+# 5. Done
 echo ""
 echo "Done! Restart Claude Code to see the status line."
 echo ""
