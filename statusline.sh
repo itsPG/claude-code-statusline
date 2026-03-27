@@ -36,9 +36,10 @@ format_remaining() {
 iso_to_epoch() {
     local iso="$1"
     date -d "$iso" +%s 2>/dev/null && return
-    # macOS/BSD fallback: strip fractional seconds + offset, parse core
-    local core="${iso%%[+-]*}" tz_part="${iso##*[+-]}"
-    core="${core%%.*}"  # strip .fractional
+    # macOS/BSD fallback: strip timezone offset then fractional seconds, parse core
+    local core="${iso%[+-][0-9][0-9]:*}"  # strip +HH:MM / -HH:MM suffix
+    core="${core%Z}"                       # strip trailing Z
+    core="${core%%.*}"                     # strip .fractional
     date -jf "%Y-%m-%dT%H:%M:%S" "$core" +%s 2>/dev/null
 }
 
@@ -136,7 +137,7 @@ BRANCH="" DIRTY=""
 if [ -n "$CWD" ] && [ -d "$CWD" ]; then
     BRANCH=$(git -C "$CWD" --no-optional-locks symbolic-ref --short HEAD 2>/dev/null)
     if [ -n "$BRANCH" ] && git -C "$CWD" --no-optional-locks diff --quiet HEAD 2>/dev/null; then
-        git -C "$CWD" --no-optional-locks ls-files --others --exclude-standard 2>/dev/null | read -r && DIRTY="★"
+        [ -n "$(git -C "$CWD" --no-optional-locks ls-files --others --exclude-standard 2>/dev/null)" ] && DIRTY="★"
     else
         [ -n "$BRANCH" ] && DIRTY="★"
     fi
