@@ -269,12 +269,13 @@ if [ -f "$USAGE_FILE" ]; then
     fi
 fi
 
-# ── Stale indicator ───────────────────────────────────────────────────────────
-REFRESH_SUFFIX=""
+# ── Stale indicator — replace color dot with ⚠ when cache is stale ──────────
+IS_STALE=0
 if [ -f "$USAGE_FILE" ] && [ "$REFRESH_INTERVAL" -gt 0 ] 2>/dev/null; then
-    AGE=$(cache_age_sec)
-    [ "$AGE" -gt $(( REFRESH_INTERVAL * 5 )) ] && REFRESH_SUFFIX=" ⚠"
+    [ "$(cache_age_sec)" -gt $(( REFRESH_INTERVAL * 3 )) ] && IS_STALE=1
 fi
+[ "$IS_STALE" = 1 ] && [ -n "$BLOCK_DISPLAY" ] && \
+    BLOCK_DISPLAY=$(echo "$BLOCK_DISPLAY" | sed 's/🟢\|🟡\|🔴/⚠/')
 
 # ── Assemble ──────────────────────────────────────────────────────────────────
 PARTS=()
