@@ -11,7 +11,7 @@
 
 # ── Configuration (override via environment variables) ────────────────────────
 TIMEZONE="${TIMEZONE:-}"                            # e.g. "America/New_York", empty = system default
-REFRESH_INTERVAL="${REFRESH_INTERVAL:-60}"           # seconds between API calls (0 = every render, risks rate limiting)
+REFRESH_INTERVAL="${REFRESH_INTERVAL:-120}"           # seconds between API calls (0 = every render, risks rate limiting)
 SHOW_WEEKLY="${SHOW_WEEKLY:-0}"                      # set to 1 to show weekly + sonnet quotas
 USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
 CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/.claude/.credentials.json}"

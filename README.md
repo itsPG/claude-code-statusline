@@ -101,7 +101,7 @@ Export in your shell profile or edit the top of `statusline.sh`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REFRESH_INTERVAL` | `60` | Seconds between API calls — **do not set to 0** (causes rate limiting) |
+| `REFRESH_INTERVAL` | `120` | Seconds between API calls — **do not set to 0** (causes rate limiting) |
 | `SHOW_WEEKLY` | `0` | Set to `1` to show weekly + Sonnet quotas |
 | `TIMEZONE` | *(system default)* | Override display timezone (e.g. `America/New_York`) |
 | `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache file path |
