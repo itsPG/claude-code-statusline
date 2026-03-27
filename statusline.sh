@@ -247,7 +247,7 @@ fi
 
 # ── Stale indicator ───────────────────────────────────────────────────────────
 REFRESH_SUFFIX=""
-if [ -f "$USAGE_FILE" ]; then
+if [ -f "$USAGE_FILE" ] && [ "$REFRESH_INTERVAL" -gt 0 ]; then
     AGE=$(cache_age_sec)
     [ "$AGE" -gt $(( REFRESH_INTERVAL * 5 )) ] && REFRESH_SUFFIX=" ⚠"
 fi
