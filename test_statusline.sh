@@ -91,11 +91,15 @@ for pct in 0 1 17 34 50 68 85 99 100; do
 done
 
 # Color thresholds
-run_make_bar 0;   assert_eq "pct=0: green"    "🟢" "$BAR_COLOR"
+run_make_bar 0;   assert_eq "pct=0: blue"     "🔵" "$BAR_COLOR"
+run_make_bar 19;  assert_eq "pct=19: blue"    "🔵" "$BAR_COLOR"
+run_make_bar 20;  assert_eq "pct=20: green"   "🟢" "$BAR_COLOR"
 run_make_bar 49;  assert_eq "pct=49: green"   "🟢" "$BAR_COLOR"
 run_make_bar 50;  assert_eq "pct=50: yellow"  "🟡" "$BAR_COLOR"
-run_make_bar 79;  assert_eq "pct=79: yellow"  "🟡" "$BAR_COLOR"
-run_make_bar 80;  assert_eq "pct=80: red"     "🔴" "$BAR_COLOR"
+run_make_bar 69;  assert_eq "pct=69: yellow"  "🟡" "$BAR_COLOR"
+run_make_bar 70;  assert_eq "pct=70: orange"  "🟠" "$BAR_COLOR"
+run_make_bar 84;  assert_eq "pct=84: orange"  "🟠" "$BAR_COLOR"
+run_make_bar 85;  assert_eq "pct=85: red"     "🔴" "$BAR_COLOR"
 run_make_bar 100; assert_eq "pct=100: red"    "🔴" "$BAR_COLOR"
 
 echo ""
@@ -128,9 +132,7 @@ GIT_BRANCH=$(git -C "$REPO_DIR" symbolic-ref --short HEAD 2>/dev/null)
 OUT=$(run_statusline "{\"model\": \"claude-opus-4-6\", \"context_window\": {\"used_percentage\": 0}, \"workspace\": {\"current_dir\": \"$REPO_DIR\"}}" \
     USAGE_FILE=/dev/null)
 assert_contains "Opus 4.6" "Opus 4.6" "$OUT"
-if [ -n "$GIT_BRANCH" ]; then
-    assert_contains "git branch '$GIT_BRANCH'" "$GIT_BRANCH" "$OUT"
-fi
+assert_not_contains "no git branch" "🌿" "$OUT"
 
 # Test 3 — Legacy cache with session + week_all
 echo ""
@@ -156,7 +158,7 @@ OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_perce
     USAGE_FILE="$USAGE_API" REFRESH_INTERVAL=999999 SHOW_WEEKLY=1)
 assert_contains "API session 35%" "35%" "$OUT"
 assert_contains "API week_all 22%" "22%" "$OUT"
-assert_contains "API sonnet 15%" "15%" "$OUT"
+assert_not_contains "API sonnet hidden" "15%" "$OUT"
 assert_contains "has countdown" "h" "$OUT"
 
 # Test 5 — Stale cache shows ⚠
@@ -186,15 +188,15 @@ OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_perce
     USAGE_FILE="$USAGE_STALE" REFRESH_INTERVAL=0)
 assert_not_contains "interval=0 no ⚠" "⚠" "$OUT"
 
-# Test 8 — week_sonnet shown with SHOW_WEEKLY=1
+# Test 8 — week_sonnet-only cache hides sonnet (only week_all is shown)
 echo ""
 echo "-- Test 8: week_sonnet --"
 USAGE_SNT=$(mktemp /tmp/test-usage-snt-XXXX.json); TMPFILES+=("$USAGE_SNT")
 echo '{"timestamp":"2026-02-21T10:00:00+00:00","source":"api","metrics":{"week_sonnet":{"percent_used":72.0,"percent_remaining":28.0,"resets_at":null}}}' > "$USAGE_SNT"
 OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' \
     USAGE_FILE="$USAGE_SNT" REFRESH_INTERVAL=999999 SHOW_WEEKLY=1)
-assert_contains "sonnet 72%" "72%" "$OUT"
-assert_contains "Snt label" "Snt" "$OUT"
+assert_not_contains "sonnet hidden" "72%" "$OUT"
+assert_not_contains "Snt label hidden" "📅" "$OUT"
 
 # Test 9 — Haiku model
 echo ""
@@ -210,13 +212,13 @@ OUT=$(run_statusline '{"model":{"display_name":"Default (Claude Sonnet 4.5)"},"c
     USAGE_FILE=/dev/null)
 assert_contains "unwraps to Snt 4.5" "Snt 4.5" "$OUT"
 
-# Test 11 — Context bar 0% / 100%
+# Test 11 — Context color at 0% / 100%
 echo ""
-echo "-- Test 11: context bars --"
+echo "-- Test 11: context colors --"
 OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' USAGE_FILE=/dev/null)
-assert_contains "0% all empty" "░░░░░░" "$OUT"
+assert_contains "0% blue" "🔵" "$OUT"
 OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":100}}' USAGE_FILE=/dev/null)
-assert_contains "100% all full" "▓▓▓▓▓▓" "$OUT"
+assert_contains "100% red" "🔴" "$OUT"
 
 # Test 12 — Missing usage file
 echo ""
@@ -226,12 +228,12 @@ OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_perce
 assert_not_contains "no ⏳" "⏳" "$OUT"
 assert_not_contains "no 📅" "📅" "$OUT"
 
-# Test 13 — Branch emoji present
+# Test 13 — Branch emoji absent
 echo ""
 echo "-- Test 13: branch emoji --"
 OUT=$(run_statusline "{\"model\":\"claude-sonnet-4-6\",\"context_window\":{\"used_percentage\":0},\"workspace\":{\"current_dir\":\"$REPO_DIR\"}}" \
     USAGE_FILE=/dev/null)
-assert_contains "🌿 present" "🌿" "$OUT"
+assert_not_contains "🌿 absent" "🌿" "$OUT"
 
 # Test 14 — All metrics together
 echo ""
@@ -242,7 +244,7 @@ OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_perce
     USAGE_FILE="$USAGE_ALL" REFRESH_INTERVAL=999999 SHOW_WEEKLY=1)
 assert_contains "session 30%" "30%" "$OUT"
 assert_contains "week 60%" "60%" "$OUT"
-assert_contains "sonnet 45%" "45%" "$OUT"
+assert_not_contains "sonnet hidden" "45%" "$OUT"
 assert_contains "separator" "│" "$OUT"
 
 # Test 15 — Parenthetical stripped

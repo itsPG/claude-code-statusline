@@ -6,13 +6,13 @@
 # Dependencies: bash, jq, curl
 # License: MIT
 #
-# Default: 🌿 main★ │ Snt 4.6 │ 🟢 Ctx ▓▓▓░░░ 42% │ ⏳ 🟡 ▓▓░░░░ 35% ↻ 2h30m │ $0.12 ⏱ 1h4m
+# Default: Snt 4.6 │ 🟢 Ctx 42% │ ⏳ 🟡 35% ↻ 2h30m │ 📅 🔵 17% ↻ 2D14H │ $0.12 ⏱ 1h4m
 # ════════════════════════════════════════════════════════════════════════════
 
 # ── Configuration (override via environment variables) ────────────────────────
 TIMEZONE="${TIMEZONE:-}"                            # e.g. "America/New_York", empty = system default
-REFRESH_INTERVAL="${REFRESH_INTERVAL:-300}"           # seconds between API calls (0 = every render, risks rate limiting)
-SHOW_WEEKLY="${SHOW_WEEKLY:-0}"                      # set to 1 to show weekly + sonnet quotas
+REFRESH_INTERVAL="${REFRESH_INTERVAL:-120}"           # seconds between API calls (0 = every render, risks rate limiting)
+SHOW_WEEKLY="${SHOW_WEEKLY:-1}"                      # set to 0 to hide weekly + sonnet quotas
 USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
 CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/.claude/.credentials.json}"
 
@@ -69,8 +69,10 @@ make_bar() {
     local i
     for ((i=0; i<filled; i++)); do BAR_STR+="▓"; done
     for ((i=0; i<empty;  i++)); do BAR_STR+="░"; done
-    if   [ "$pct" -lt 50 ]; then BAR_COLOR="🟢"
-    elif [ "$pct" -lt 80 ]; then BAR_COLOR="🟡"
+    if   [ "$pct" -lt 20 ]; then BAR_COLOR="🔵"
+    elif [ "$pct" -lt 50 ]; then BAR_COLOR="🟢"
+    elif [ "$pct" -lt 70 ]; then BAR_COLOR="🟡"
+    elif [ "$pct" -lt 85 ]; then BAR_COLOR="🟠"
     else                         BAR_COLOR="🔴"
     fi
 }
@@ -131,19 +133,6 @@ if [ -n "$J_DURATION" ] && [ "$J_DURATION" != "0" ] && [ "$J_DURATION" != "null"
     DURATION_STR=$(format_remaining $(( J_DURATION / 1000 )))
 fi
 
-# ── Git branch ────────────────────────────────────────────────────────────────
-CWD="$J_CWD"
-BRANCH="" DIRTY=""
-if [ -n "$CWD" ] && [ -d "$CWD" ]; then
-    BRANCH=$(git -C "$CWD" --no-optional-locks symbolic-ref --short HEAD 2>/dev/null)
-    if [ -n "$BRANCH" ] && git -C "$CWD" --no-optional-locks diff --quiet HEAD 2>/dev/null; then
-        [ -n "$(git -C "$CWD" --no-optional-locks ls-files --others --exclude-standard 2>/dev/null)" ] && DIRTY="★"
-    else
-        [ -n "$BRANCH" ] && DIRTY="★"
-    fi
-fi
-[ -z "$BRANCH" ] && BRANCH="(no git)"
-[ "${#BRANCH}" -gt 30 ] && BRANCH="${BRANCH:0:27}..."
 
 # ── Refresh usage via Anthropic OAuth API ────────────────────────────────────
 refresh_usage_api() {
@@ -228,14 +217,14 @@ if [ -f "$USAGE_FILE" ]; then
             fi
             make_bar "$SESS_INT"
             if [ -n "$REMAIN_STR" ]; then
-                BLOCK_DISPLAY="⏳ ${BAR_COLOR} ${BAR_STR} ${SESS_INT}% ↻ ${REMAIN_STR}"
+                BLOCK_DISPLAY="⏳ ${BAR_COLOR} ${SESS_INT}% ↻ ${REMAIN_STR}"
             else
-                BLOCK_DISPLAY="⏳ ${BAR_COLOR} ${BAR_STR} ${SESS_INT}%"
+                BLOCK_DISPLAY="⏳ ${BAR_COLOR} ${SESS_INT}%"
             fi
         fi
 
         # Weekly + Sonnet (opt-in)
-        WEEK_INT="" WEEK_COLOR="" WEEK_RESET_LABEL="" SONNET_INT="" SONNET_COLOR=""
+        WEEK_INT="" WEEK_COLOR="" WEEK_RESET_LABEL=""
         if [ "$SHOW_WEEKLY" = "1" ] && [ -n "$U_WEEK_PCT" ] && [ "$U_WEEK_PCT" != "null" ]; then
             WEEK_INT="${U_WEEK_PCT%.*}"
             if [ -n "$U_WEEK_RESETS" ] && [ "$U_WEEK_RESETS" != "null" ]; then
@@ -248,23 +237,21 @@ if [ -f "$USAGE_FILE" ]; then
                     WEEK_EPOCH=$(tz_date "${WEEK_TZ}" -d "$DATE_PART" +%s 2>/dev/null)
                 fi
                 [ -n "$WEEK_EPOCH" ] && \
-                    WEEK_RESET_LABEL=$(tz_date "${TIMEZONE}" -d "@$WEEK_EPOCH" +"%a %Hh" 2>/dev/null \
-                        | tr '[:upper:]' '[:lower:]')
+                    _NOW=$(date +%s)
+                    _DIFF=$(( WEEK_EPOCH - _NOW ))
+                    if [ "$_DIFF" -gt 0 ]; then
+                        if [ "$_DIFF" -ge 86400 ]; then
+                            WEEK_RESET_LABEL="$(( _DIFF / 86400 ))d"
+                        else
+                            WEEK_RESET_LABEL="$(( _DIFF / 3600 ))h"
+                        fi
+                    fi
             fi
             make_bar "$WEEK_INT"; WEEK_COLOR="$BAR_COLOR"
         fi
-        if [ "$SHOW_WEEKLY" = "1" ] && [ -n "$U_SONNET_PCT" ] && [ "$U_SONNET_PCT" != "null" ]; then
-            SONNET_INT="${U_SONNET_PCT%.*}"
-            make_bar "$SONNET_INT"; SONNET_COLOR="$BAR_COLOR"
-        fi
-        if [ -n "$WEEK_INT" ] && [ -n "$SONNET_INT" ]; then
-            WEEK_SONNET_DISPLAY="📅 ${WEEK_COLOR} ${WEEK_INT}% / Snt ${SONNET_COLOR} ${SONNET_INT}%"
-            [ -n "$WEEK_RESET_LABEL" ] && WEEK_SONNET_DISPLAY+=" ↻ ${WEEK_RESET_LABEL}"
-        elif [ -n "$WEEK_INT" ]; then
+        if [ -n "$WEEK_INT" ]; then
             WEEK_SONNET_DISPLAY="📅 ${WEEK_COLOR} ${WEEK_INT}%"
             [ -n "$WEEK_RESET_LABEL" ] && WEEK_SONNET_DISPLAY+=" ↻ ${WEEK_RESET_LABEL}"
-        elif [ -n "$SONNET_INT" ]; then
-            WEEK_SONNET_DISPLAY="Snt ${SONNET_COLOR} ${SONNET_INT}%"
         fi
     fi
 fi
@@ -275,17 +262,16 @@ if [ -f "$USAGE_FILE" ] && [ "$REFRESH_INTERVAL" -gt 0 ] 2>/dev/null; then
     [ "$(cache_age_sec)" -gt $(( REFRESH_INTERVAL * 3 )) ] && IS_STALE=1
 fi
 [ "$IS_STALE" = 1 ] && [ -n "$BLOCK_DISPLAY" ] && \
-    BLOCK_DISPLAY=$(echo "$BLOCK_DISPLAY" | sed 's/🟢\|🟡\|🔴/⚠/')
+    BLOCK_DISPLAY=$(echo "$BLOCK_DISPLAY" | sed 's/🔵\|🟢\|🟡\|🟠\|🔴/⚠/')
 
 # ── Assemble ──────────────────────────────────────────────────────────────────
 PARTS=()
-[ -n "$BRANCH" ] && PARTS+=("🌿 $BRANCH$DIRTY")
 if [ -n "$MODEL" ] && [ -n "$EFFORT_LABEL" ]; then
     PARTS+=("$MODEL/$EFFORT_LABEL")
 elif [ -n "$MODEL" ]; then
     PARTS+=("$MODEL")
 fi
-[ -n "$CTX_PERCENT" ]         && PARTS+=("$CTX_COLOR $CTX_LABEL $CTX_BAR ${CTX_PERCENT}%")
+[ -n "$CTX_PERCENT" ]         && PARTS+=("$CTX_COLOR $CTX_LABEL ${CTX_PERCENT}%")
 [ -n "$BLOCK_DISPLAY" ]       && PARTS+=("$BLOCK_DISPLAY")
 [ -n "$WEEK_SONNET_DISPLAY" ] && PARTS+=("$WEEK_SONNET_DISPLAY")
 # Cost + duration (only if non-zero)
