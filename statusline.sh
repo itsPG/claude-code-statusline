@@ -16,6 +16,16 @@ SHOW_WEEKLY="${SHOW_WEEKLY:-1}"                      # set to 0 to hide weekly +
 USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
 CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/.claude/.credentials.json}"
 
+# ── Resolve per-account cache (hash token → separate cache per account) ──────
+ACCOUNT_TOKEN=""
+if [ -f "$CREDENTIALS_FILE" ]; then
+    ACCOUNT_TOKEN=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
+fi
+if [ -n "$ACCOUNT_TOKEN" ]; then
+    ACCOUNT_HASH=$(echo -n "$ACCOUNT_TOKEN" | sha256sum | cut -c1-8)
+    USAGE_FILE="${USAGE_FILE%.json}-${ACCOUNT_HASH}.json"
+fi
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 tz_date() {
     local tz="$1"; shift
@@ -149,14 +159,11 @@ fi
 
 # ── Refresh usage via Anthropic OAuth API ────────────────────────────────────
 refresh_usage_api() {
-    [ ! -f "$CREDENTIALS_FILE" ] && return 1
-    local token
-    token=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
-    [ -z "$token" ] && return 1
+    [ -z "$ACCOUNT_TOKEN" ] && return 1
     local resp
     resp=$(curl -s --max-time 3 \
         "https://api.anthropic.com/api/oauth/usage" \
-        -H "Authorization: Bearer $token" \
+        -H "Authorization: Bearer $ACCOUNT_TOKEN" \
         -H "anthropic-beta: oauth-2025-04-20" \
         -H "Content-Type: application/json" 2>/dev/null)
     echo "$resp" | jq -e '.five_hour.utilization' >/dev/null 2>&1 || return 1
@@ -183,7 +190,7 @@ refresh_usage_api() {
     }' > "${USAGE_FILE}.tmp" && mv "${USAGE_FILE}.tmp" "$USAGE_FILE"
 }
 
-LOCK_FILE="/tmp/statusline-refresh.lock"
+LOCK_FILE="/tmp/statusline-refresh${ACCOUNT_HASH:+-$ACCOUNT_HASH}.lock"
 if [ "$(cache_age_sec)" -gt "$REFRESH_INTERVAL" ]; then
     ( flock -n 9 || exit 0; refresh_usage_api ) 9>"$LOCK_FILE"
 fi

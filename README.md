@@ -96,7 +96,7 @@ Export in your shell profile or edit the top of `statusline.sh`:
 | `REFRESH_INTERVAL` | `120` | Seconds between API calls — **do not set to 0** (causes rate limiting) |
 | `SHOW_WEEKLY` | `1` | Set to `0` to hide weekly quota |
 | `TIMEZONE` | *(system default)* | Override display timezone (e.g. `America/New_York`) |
-| `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache file path |
+| `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache file base path (auto-suffixed with account hash) |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth credentials path |
 
 ## Testing
@@ -158,6 +158,7 @@ Forked from [ohugonnot/claude-code-statusline](https://github.com/ohugonnot/clau
 - Displays context window size label (`1M`/`2M`) when larger than 200k
 - Weekly quota shown by default (`SHOW_WEEKLY=1`)
 - Shorter default refresh interval (120s instead of 300s)
+- Per-account usage cache (supports switching between Anthropic accounts)
 - Installer prompts before downloading from GitHub when local file is not found
 
 ## License

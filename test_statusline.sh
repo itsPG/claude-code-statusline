@@ -326,6 +326,36 @@ OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_perce
 assert_contains "200k 75% orange" "🟠" "$OUT"
 assert_not_contains "200k 75% no purple" "🟣" "$OUT"
 
+# Test 22 — Per-account cache isolation
+echo ""
+echo "-- Test 22: per-account cache --"
+CRED_A=$(mktemp /tmp/test-cred-a-XXXX.json); TMPFILES+=("$CRED_A")
+CRED_B=$(mktemp /tmp/test-cred-b-XXXX.json); TMPFILES+=("$CRED_B")
+echo '{"claudeAiOauth":{"accessToken":"token-aaa"}}' > "$CRED_A"
+echo '{"claudeAiOauth":{"accessToken":"token-bbb"}}' > "$CRED_B"
+
+CACHE_DIR=$(mktemp -d /tmp/test-cache-XXXX); TMPFILES+=("$CACHE_DIR")
+HASH_A=$(echo -n "token-aaa" | sha256sum | cut -c1-8)
+HASH_B=$(echo -n "token-bbb" | sha256sum | cut -c1-8)
+CACHE_A="$CACHE_DIR/usage-${HASH_A}.json"
+CACHE_B="$CACHE_DIR/usage-${HASH_B}.json"
+
+# Seed cache for account A with 40%, account B with 80%
+echo '{"timestamp":"2026-02-21T10:00:00Z","source":"api","metrics":{"session":{"percent_used":40.0,"percent_remaining":60.0,"resets_at":null}}}' > "$CACHE_A"
+echo '{"timestamp":"2026-02-21T10:00:00Z","source":"api","metrics":{"session":{"percent_used":80.0,"percent_remaining":20.0,"resets_at":null}}}' > "$CACHE_B"
+
+OUT_A=$(echo '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' | \
+    env USAGE_FILE="$CACHE_DIR/usage.json" CREDENTIALS_FILE="$CRED_A" REFRESH_INTERVAL=999999 bash "$STATUSLINE_SH" 2>/dev/null)
+assert_contains "account A sees 40%" "40%" "$OUT_A"
+assert_not_contains "account A no 80%" "80%" "$OUT_A"
+
+OUT_B=$(echo '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' | \
+    env USAGE_FILE="$CACHE_DIR/usage.json" CREDENTIALS_FILE="$CRED_B" REFRESH_INTERVAL=999999 bash "$STATUSLINE_SH" 2>/dev/null)
+assert_contains "account B sees 80%" "80%" "$OUT_B"
+assert_not_contains "account B no 40%" "40%" "$OUT_B"
+
+rm -rf "$CACHE_DIR"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
