@@ -124,6 +124,17 @@ CTX_LABEL="Ctx"
 make_bar "$CTX_PERCENT"
 CTX_COLOR="$BAR_COLOR" CTX_BAR="$BAR_STR"
 
+# 1M context: stricter thresholds — 50% of 1M is already 500K tokens
+if [ "$CTX_LABEL" = "1M" ]; then
+    if   [ "$CTX_PERCENT" -lt 12 ]; then CTX_COLOR="🔵"
+    elif [ "$CTX_PERCENT" -lt 29 ]; then CTX_COLOR="🟢"
+    elif [ "$CTX_PERCENT" -lt 41 ]; then CTX_COLOR="🟡"
+    elif [ "$CTX_PERCENT" -lt 50 ]; then CTX_COLOR="🟠"
+    elif [ "$CTX_PERCENT" -lt 70 ]; then CTX_COLOR="🔴"
+    else                                 CTX_COLOR="🟣"
+    fi
+fi
+
 # ── Session cost + duration ───────────────────────────────────────────────────
 COST_STR="" DURATION_STR=""
 if [ -n "$J_COST" ] && [ "$J_COST" != "0" ] && [ "$J_COST" != "null" ]; then

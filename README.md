@@ -3,46 +3,36 @@
 **Know your Claude Code rate limits in real time.** No more guessing when your session or weekly quota resets — see your actual usage data live in the status bar.
 
 ```
-🌿 main★ │ Opus 4.6 │ 🟢 Ctx ▓▓▓░░░ 42% │ ⏳ 🟡 ▓▓░░░░ 35% ↻ 2h30m │ $0.42 ⏱ 1h4m
+Opus 4.6 │ 🟢 Ctx 42% │ ⏳ 🟡 35% ↻ 2h30m │ 📅 🔵 17% ↻ 2d │ $0.42 ⏱ 1h4m
 ```
 
 ## Why?
 
 Claude Code has rate limits but no built-in way to see them while you work. The `/usage` command exists, but you have to stop what you're doing to check it manually.
 
-This script **fetches your usage via API every 60 seconds** and displays the results directly in your status line — session rate limit with reset countdown, all at a glance.
+This script **fetches your usage via API every 2 minutes** and displays the results directly in your status line — session and weekly rate limits with reset countdowns, all at a glance.
 
 ## What you get
 
-Color-coded progress bars: 🟢 under 50% │ 🟡 50-80% │ 🔴 over 80%
+Color-coded indicators: 🔵 under 20% │ 🟢 20-50% │ 🟡 50-70% │ 🟠 70-85% │ 🔴 over 85%
 
 | Segment | Example | Description |
 |---------|---------|-------------|
-| **Git** | `🌿 main★` | Current branch + `★` if dirty |
 | **Model** | `Opus 4.6` | Active model. With effort set: `Opus 4.6/mx` |
-| **Context** | `🟢 Ctx ▓▓▓░░░ 42%` | Context window fill. Shows `1M` for 1M context |
-| **Session** | `⏳ 🟡 ▓▓░░░░ 35% ↻ 2h30m` | 5-hour session quota + countdown to reset |
+| **Context** | `🟢 Ctx 42%` | Context window fill. Shows `1M` for 1M context |
+| **Session** | `⏳ 🟡 35% ↻ 2h30m` | 5-hour session quota + countdown to reset |
+| **Weekly** | `📅 🔵 17% ↻ 2d` | 7-day all-models quota + countdown to reset |
 | **Cost** | `$0.42 ⏱ 1h4m` | Session cost + wall-clock duration |
-
-With `SHOW_WEEKLY=1`:
-
-```
-🌿 main★ │ Opus 4.6 │ 🟢 1M ▓▓▓░░░ 42% │ ⏳ 🟡 ▓▓░░░░ 35% ↻ 2h30m │ 📅 🟢 17% / Snt 🟢 10% ↻ thu 13h │ $0.42 ⏱ 1h4m
-```
-
-| Segment | Example | Description |
-|---------|---------|-------------|
-| **Weekly** | `📅 🟢 17% / Snt 🟢 10% ↻ thu 13h` | Weekly all-models + Sonnet quotas, reset day |
 
 ## How it works
 
 ```
 Claude Code → JSON stdin → statusline.sh → formatted status string
-                              ↓ (if cache > 60s old)
+                              ↓ (if cache > 120s old)
                          curl → Anthropic OAuth API → ~/.claude/usage-exact.json
 ```
 
-Every 60 seconds (configurable), the script calls the Anthropic usage API with your OAuth token. The call takes ~200ms and runs inline — no background processes, no tmux, no scraping.
+Every 2 minutes (configurable), the script calls the Anthropic usage API with your OAuth token. The call takes ~200ms and runs inline — no background processes, no tmux, no scraping.
 
 The OAuth token is read from `~/.claude/.credentials.json`, which Claude Code maintains automatically during active sessions. If the token is expired or the API is unreachable, the script silently falls back to cached data or displays without usage info.
 
@@ -59,19 +49,19 @@ If Anthropic removes this endpoint, the script degrades gracefully: you still ge
 ### One-liner
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ohugonnot/claude-code-statusline/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/itsPG/claude-code-statusline/main/install.sh | bash
 ```
 
 With custom refresh interval (e.g. every 2 minutes):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ohugonnot/claude-code-statusline/main/install.sh | bash -s -- --refresh 120
+curl -fsSL https://raw.githubusercontent.com/itsPG/claude-code-statusline/main/install.sh | bash -s -- --refresh 120
 ```
 
 ### Manual
 
 ```bash
-git clone https://github.com/ohugonnot/claude-code-statusline.git
+git clone https://github.com/itsPG/claude-code-statusline.git
 cd claude-code-statusline
 bash install.sh
 ```
@@ -101,8 +91,8 @@ Export in your shell profile or edit the top of `statusline.sh`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REFRESH_INTERVAL` | `300` | Seconds between API calls — **do not set to 0** (causes rate limiting) |
-| `SHOW_WEEKLY` | `0` | Set to `1` to show weekly + Sonnet quotas |
+| `REFRESH_INTERVAL` | `120` | Seconds between API calls — **do not set to 0** (causes rate limiting) |
+| `SHOW_WEEKLY` | `1` | Set to `0` to hide weekly quota |
 | `TIMEZONE` | *(system default)* | Override display timezone (e.g. `America/New_York`) |
 | `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache file path |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth credentials path |

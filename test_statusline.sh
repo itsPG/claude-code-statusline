@@ -287,6 +287,32 @@ OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_perce
     USAGE_FILE=/dev/null)
 assert_contains "Ctx label" "Ctx" "$OUT"
 
+# Test 20 — 1M context stricter color thresholds
+echo ""
+echo "-- Test 20: 1M context colors --"
+OUT=$(run_statusline '{"model":"claude-opus-4-6","context_window":{"used_percentage":10,"context_window_size":1000000}}' USAGE_FILE=/dev/null)
+assert_contains "1M 10% blue" "🔵" "$OUT"
+
+OUT=$(run_statusline '{"model":"claude-opus-4-6","context_window":{"used_percentage":15,"context_window_size":1000000}}' USAGE_FILE=/dev/null)
+assert_contains "1M 15% green" "🟢" "$OUT"
+
+OUT=$(run_statusline '{"model":"claude-opus-4-6","context_window":{"used_percentage":35,"context_window_size":1000000}}' USAGE_FILE=/dev/null)
+assert_contains "1M 35% yellow" "🟡" "$OUT"
+
+OUT=$(run_statusline '{"model":"claude-opus-4-6","context_window":{"used_percentage":45,"context_window_size":1000000}}' USAGE_FILE=/dev/null)
+assert_contains "1M 45% orange" "🟠" "$OUT"
+
+OUT=$(run_statusline '{"model":"claude-opus-4-6","context_window":{"used_percentage":55,"context_window_size":1000000}}' USAGE_FILE=/dev/null)
+assert_contains "1M 55% red" "🔴" "$OUT"
+
+OUT=$(run_statusline '{"model":"claude-opus-4-6","context_window":{"used_percentage":75,"context_window_size":1000000}}' USAGE_FILE=/dev/null)
+assert_contains "1M 75% purple" "🟣" "$OUT"
+
+# Verify regular context is NOT affected by 1M override
+OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":75,"context_window_size":200000}}' USAGE_FILE=/dev/null)
+assert_contains "200k 75% orange" "🟠" "$OUT"
+assert_not_contains "200k 75% no purple" "🟣" "$OUT"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
