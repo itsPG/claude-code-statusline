@@ -53,11 +53,21 @@ format_remaining() {
 iso_to_epoch() {
     local iso="$1"
     date -d "$iso" +%s 2>/dev/null && return
-    # macOS/BSD fallback: strip timezone offset then fractional seconds, parse core
-    local core="${iso%[+-][0-9][0-9]:*}"  # strip +HH:MM / -HH:MM suffix
-    core="${core%Z}"                       # strip trailing Z
-    core="${core%%.*}"                     # strip .fractional
-    date -jf "%Y-%m-%dT%H:%M:%S" "$core" +%s 2>/dev/null
+    # macOS/BSD fallback: parse datetime as UTC, then apply timezone offset
+    local tz_sign tz_h tz_m tz_adj=0
+    tz_sign=$(echo "$iso" | sed -n 's/.*T[0-9:.]*\([+-]\)[0-9][0-9]:[0-9][0-9]$/\1/p')
+    tz_h=$(echo "$iso"    | sed -n 's/.*T[0-9:.]*[+-]\([0-9][0-9]\):[0-9][0-9]$/\1/p')
+    tz_m=$(echo "$iso"    | sed -n 's/.*T[0-9:.]*[+-][0-9][0-9]:\([0-9][0-9]\)$/\1/p')
+    if [ -n "$tz_sign" ] && [ -n "$tz_h" ]; then
+        tz_adj=$(( 10#$tz_h * 3600 + 10#${tz_m:-0} * 60 ))
+        [ "$tz_sign" = "+" ] && tz_adj=$(( -tz_adj ))
+    fi
+    local core="${iso%[+-][0-9][0-9]:*}"
+    core="${core%Z}"
+    core="${core%%.*}"
+    local epoch
+    epoch=$(TZ=UTC date -jf "%Y-%m-%dT%H:%M:%S" "$core" +%s 2>/dev/null) || return 1
+    echo $(( epoch + tz_adj ))
 }
 
 file_mtime() {
