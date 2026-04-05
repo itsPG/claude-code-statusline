@@ -21,6 +21,13 @@ ACCOUNT_TOKEN=""
 if [ -f "$CREDENTIALS_FILE" ]; then
     ACCOUNT_TOKEN=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
 fi
+# Fallback: macOS Keychain (Claude Code stores credentials here when no .credentials.json)
+if [ -z "$ACCOUNT_TOKEN" ] && command -v security &>/dev/null; then
+    _keychain_json=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)
+    if [ -n "$_keychain_json" ]; then
+        ACCOUNT_TOKEN=$(echo "$_keychain_json" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+    fi
+fi
 if [ -n "$ACCOUNT_TOKEN" ]; then
     ACCOUNT_HASH=$(echo -n "$ACCOUNT_TOKEN" | sha256sum | cut -c1-8)
     USAGE_FILE="${USAGE_FILE%.json}-${ACCOUNT_HASH}.json"
@@ -161,9 +168,12 @@ fi
 refresh_usage_api() {
     [ -z "$ACCOUNT_TOKEN" ] && return 1
     local resp
+    local _claude_ver
+    _claude_ver=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     resp=$(curl -s --max-time 3 \
         "https://api.anthropic.com/api/oauth/usage" \
         -H "Authorization: Bearer $ACCOUNT_TOKEN" \
+        -H "User-Agent: claude-code/${_claude_ver:-2.1.92}" \
         -H "anthropic-beta: oauth-2025-04-20" \
         -H "Content-Type: application/json" 2>/dev/null)
     echo "$resp" | jq -e '.five_hour.utilization' >/dev/null 2>&1 || return 1
@@ -176,11 +186,11 @@ refresh_usage_api() {
                 percent_remaining: (100 - .five_hour.utilization),
                 resets_at: .five_hour.resets_at
             },
-            week_all: {
+            week_all: (if .seven_day then {
                 percent_used: .seven_day.utilization,
                 percent_remaining: (100 - .seven_day.utilization),
                 resets_at: .seven_day.resets_at
-            },
+            } else null end),
             week_sonnet: (if .seven_day_sonnet then {
                 percent_used: .seven_day_sonnet.utilization,
                 percent_remaining: (100 - .seven_day_sonnet.utilization),
@@ -192,7 +202,21 @@ refresh_usage_api() {
 
 LOCK_FILE="/tmp/statusline-refresh${ACCOUNT_HASH:+-$ACCOUNT_HASH}.lock"
 if [ "$(cache_age_sec)" -gt "$REFRESH_INTERVAL" ]; then
-    ( flock -n 9 || exit 0; refresh_usage_api ) 9>"$LOCK_FILE"
+    if command -v flock &>/dev/null; then
+        ( flock -n 9 || exit 0; refresh_usage_api ) 9>"$LOCK_FILE"
+    else
+        # macOS: flock not available — remove stale lock then try to acquire
+        if [ -f "$LOCK_FILE" ]; then
+            _lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
+            if [ -z "$_lock_pid" ] || ! kill -0 "$_lock_pid" 2>/dev/null; then
+                rm -f "$LOCK_FILE"
+            fi
+        fi
+        if ( set -o noclobber; echo $$ > "$LOCK_FILE" ) 2>/dev/null; then
+            refresh_usage_api
+            rm -f "$LOCK_FILE"
+        fi
+    fi
 fi
 
 # ── Read cached usage metrics ─────────────────────────────────────────────────
