@@ -16,10 +16,12 @@ This script **fetches your usage via API every 2 minutes** and displays the resu
 
 Color-coded indicators: 🔵 under 20% │ 🟢 20-50% │ 🟡 50-70% │ 🟠 70-85% │ 🔴 over 85%
 
+For **1M/2M context windows**, thresholds are stricter: 🔵 <12% │ 🟢 <29% │ 🟡 <41% │ 🟠 <50% │ 🔴 50-69% │ 🟣 >=70%
+
 | Segment | Example | Description |
 |---------|---------|-------------|
 | **Model** | `Opus 4.6` | Active model. With effort set: `Opus 4.6/mx` |
-| **Context** | `🟢 Ctx 42%` | Context window fill. Shows `1M` for 1M context |
+| **Context** | `🟢 Ctx 42%` | Context window fill. Shows `1M`/`2M` for large context (with stricter color thresholds) |
 | **Session** | `⏳ 🟡 35% ↻ 2h30m` | 5-hour session quota + countdown to reset |
 | **Weekly** | `📅 🔵 17% ↻ 2d` | 7-day all-models quota + countdown to reset |
 | **Cost** | `$0.42 ⏱ 1h4m` | Session cost + wall-clock duration |
@@ -145,6 +147,18 @@ rm -f ~/.claude/hooks/statusline.sh
 rm -f ~/.claude/usage-exact.json
 # Remove the "statusLine" key from ~/.claude/settings.json
 ```
+
+## Acknowledgements
+
+Forked from [ohugonnot/claude-code-statusline](https://github.com/ohugonnot/claude-code-statusline). Changes in this fork:
+
+- Removed git branch segment and progress bar graphics for a cleaner display
+- Added 5-level color coding (🔵🟢🟡🟠🔴) instead of 3
+- Stricter color thresholds for 1M/2M context windows, with 🟣 (purple) at >=70%
+- Displays context window size label (`1M`/`2M`) when larger than 200k
+- Weekly quota shown by default (`SHOW_WEEKLY=1`)
+- Shorter default refresh interval (120s instead of 300s)
+- Installer prompts before downloading from GitHub when local file is not found
 
 ## License
 

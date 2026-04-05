@@ -308,6 +308,19 @@ assert_contains "1M 55% red" "🔴" "$OUT"
 OUT=$(run_statusline '{"model":"claude-opus-4-6","context_window":{"used_percentage":75,"context_window_size":1000000}}' USAGE_FILE=/dev/null)
 assert_contains "1M 75% purple" "🟣" "$OUT"
 
+# Test 21 — 2M context label + stricter colors
+echo ""
+echo "-- Test 21: 2M context --"
+OUT=$(run_statusline '{"model":"claude-opus-4-6","context_window":{"used_percentage":30,"context_window_size":2000000}}' USAGE_FILE=/dev/null)
+assert_contains "2M label" "2M" "$OUT"
+assert_not_contains "2M no Ctx" "Ctx" "$OUT"
+
+OUT=$(run_statusline '{"model":"claude-opus-4-6","context_window":{"used_percentage":55,"context_window_size":2000000}}' USAGE_FILE=/dev/null)
+assert_contains "2M 55% red" "🔴" "$OUT"
+
+OUT=$(run_statusline '{"model":"claude-opus-4-6","context_window":{"used_percentage":75,"context_window_size":2000000}}' USAGE_FILE=/dev/null)
+assert_contains "2M 75% purple" "🟣" "$OUT"
+
 # Verify regular context is NOT affected by 1M override
 OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":75,"context_window_size":200000}}' USAGE_FILE=/dev/null)
 assert_contains "200k 75% orange" "🟠" "$OUT"

@@ -119,13 +119,15 @@ fi
 # ── Context window ────────────────────────────────────────────────────────────
 CTX_PERCENT="${J_CTX_PCT:-0}"
 CTX_LABEL="Ctx"
-[ "$J_CTX_SIZE" -ge 900000 ] 2>/dev/null && CTX_LABEL="1M"
+if   [ "$J_CTX_SIZE" -ge 1900000 ] 2>/dev/null; then CTX_LABEL="2M"
+elif [ "$J_CTX_SIZE" -ge 900000 ]  2>/dev/null; then CTX_LABEL="1M"
+fi
 
 make_bar "$CTX_PERCENT"
 CTX_COLOR="$BAR_COLOR" CTX_BAR="$BAR_STR"
 
-# 1M context: stricter thresholds — 50% of 1M is already 500K tokens
-if [ "$CTX_LABEL" = "1M" ]; then
+# Large context (1M+): stricter thresholds — 50% of 1M is already 500K tokens
+if [ "$CTX_LABEL" = "1M" ] || [ "$CTX_LABEL" = "2M" ]; then
     if   [ "$CTX_PERCENT" -lt 12 ]; then CTX_COLOR="🔵"
     elif [ "$CTX_PERCENT" -lt 29 ]; then CTX_COLOR="🟢"
     elif [ "$CTX_PERCENT" -lt 41 ]; then CTX_COLOR="🟡"
