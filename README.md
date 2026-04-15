@@ -3,7 +3,7 @@
 **Know your Claude Code rate limits in real time.** No more guessing when your session or weekly quota resets — see your actual usage data live in the status bar.
 
 ```
-Opus 4.6 │ 🟢 Ctx 42% │ ⏳ 🟡 35% ↻ 2h30m │ 📅 🔵 17% ↻ 2d │ $0.42 ⏱ 1h4m
+Opus 4.6 │ 🟢 Ctx 42% │ ⏳ 🟡 35% ↻ 2h30m │ 📅 🔵 17% ↻ 2d │ 💳 🟢 20% $4.10/$20 │ $0.42 ⏱ 1h4m
 ```
 
 ## Why?
@@ -24,6 +24,7 @@ For **1M/2M context windows**, thresholds are stricter: 🔵 <12% │ 🟢 <29% 
 | **Context** | `🟢 Ctx 42%` | Context window fill. Shows `1M`/`2M` for large context (with stricter color thresholds) |
 | **Session** | `⏳ 🟡 35% ↻ 2h30m` | 5-hour session quota + countdown to reset |
 | **Weekly** | `📅 🔵 17% ↻ 2d` | 7-day all-models quota + countdown to reset |
+| **Extra** | `💳 🟢 20% $4.10/$20` | Pay-as-you-go extra usage (only shown when enabled on your account) |
 | **Cost** | `$0.42 ⏱ 1h4m` | Session cost + wall-clock duration |
 
 ## How it works
@@ -95,6 +96,7 @@ Export in your shell profile or edit the top of `statusline.sh`:
 |----------|---------|-------------|
 | `REFRESH_INTERVAL` | `120` | Seconds between API calls — **do not set to 0** (causes rate limiting) |
 | `SHOW_WEEKLY` | `1` | Set to `0` to hide weekly quota |
+| `SHOW_EXTRA` | `1` | Set to `0` to hide extra usage (pay-as-you-go) |
 | `TIMEZONE` | *(system default)* | Override display timezone (e.g. `America/New_York`) |
 | `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache file base path (auto-suffixed with account hash) |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth credentials path |

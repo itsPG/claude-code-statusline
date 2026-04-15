@@ -61,7 +61,7 @@ run_make_bar() {
 
 count_char() {
     local char="$1" str="$2"
-    echo -n "$str" | grep -o "$char" | wc -l
+    echo -n "$str" | grep -o "$char" | wc -l | tr -d ' '
 }
 
 # pct=0 → 6 empty blocks
@@ -166,7 +166,8 @@ echo ""
 echo "-- Test 5: stale cache --"
 USAGE_STALE=$(mktemp /tmp/test-usage-stale-XXXX.json); TMPFILES+=("$USAGE_STALE")
 echo '{"timestamp":"2026-02-21T09:00:00+00:00","source":"api","metrics":{"session":{"percent_used":30.0,"percent_remaining":70.0,"resets_at":null}}}' > "$USAGE_STALE"
-touch -d '30 minutes ago' "$USAGE_STALE"
+_stale_ts=$(date -v-30M +%Y%m%d%H%M.%S 2>/dev/null || date -d '30 minutes ago' +%Y%m%d%H%M.%S 2>/dev/null)
+touch -t "$_stale_ts" "$USAGE_STALE"
 OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' \
     USAGE_FILE="$USAGE_STALE" REFRESH_INTERVAL=300)
 assert_contains "stale cache shows ⚠" "⚠" "$OUT"
@@ -183,7 +184,7 @@ assert_not_contains "fresh cache no ⚠" "⚠" "$OUT"
 # Test 7 — REFRESH_INTERVAL=0 never shows ⚠
 echo ""
 echo "-- Test 7: REFRESH_INTERVAL=0 no stale indicator --"
-touch -d '30 minutes ago' "$USAGE_STALE"
+touch -t "$_stale_ts" "$USAGE_STALE"
 OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' \
     USAGE_FILE="$USAGE_STALE" REFRESH_INTERVAL=0)
 assert_not_contains "interval=0 no ⚠" "⚠" "$OUT"
@@ -355,6 +356,25 @@ assert_contains "account B sees 80%" "80%" "$OUT_B"
 assert_not_contains "account B no 40%" "40%" "$OUT_B"
 
 rm -rf "$CACHE_DIR"
+
+# Test 23 — Extra usage displayed
+echo ""
+echo "-- Test 23: extra usage display --"
+USAGE_EXTRA=$(mktemp /tmp/test-usage-extra-XXXX.json); TMPFILES+=("$USAGE_EXTRA")
+echo '{"timestamp":"2026-02-21T10:00:00Z","source":"api","metrics":{"session":{"percent_used":50.0,"percent_remaining":50.0,"resets_at":null},"extra":{"percent_used":20.5,"used_credits":410.0,"monthly_limit":2000}}}' > "$USAGE_EXTRA"
+OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' \
+    USAGE_FILE="$USAGE_EXTRA" REFRESH_INTERVAL=999999 SHOW_EXTRA=1)
+assert_contains "extra icon" "💳" "$OUT"
+assert_contains "extra 20%" "20%" "$OUT"
+assert_contains "extra used dollars" '$4.10' "$OUT"
+assert_contains "extra limit dollars" '$20' "$OUT"
+
+# Test 24 — SHOW_EXTRA=0 hides extra usage
+echo ""
+echo "-- Test 24: SHOW_EXTRA=0 hides extra --"
+OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' \
+    USAGE_FILE="$USAGE_EXTRA" REFRESH_INTERVAL=999999 SHOW_EXTRA=0)
+assert_not_contains "extra hidden" "💳" "$OUT"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""

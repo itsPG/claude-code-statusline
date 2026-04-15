@@ -13,16 +13,18 @@
 TIMEZONE="${TIMEZONE:-}"                            # e.g. "America/New_York", empty = system default
 REFRESH_INTERVAL="${REFRESH_INTERVAL:-120}"           # seconds between API calls (0 = every render, risks rate limiting)
 SHOW_WEEKLY="${SHOW_WEEKLY:-1}"                      # set to 0 to hide weekly + sonnet quotas
+SHOW_EXTRA="${SHOW_EXTRA:-1}"                        # set to 0 to hide extra usage (pay-as-you-go)
 USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
 CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/.claude/.credentials.json}"
 
 # ── Resolve per-account cache (hash token → separate cache per account) ──────
+_CREDENTIALS_CUSTOM="${CREDENTIALS_FILE+set}"   # was CREDENTIALS_FILE explicitly set?
 ACCOUNT_TOKEN=""
 if [ -f "$CREDENTIALS_FILE" ]; then
     ACCOUNT_TOKEN=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
 fi
-# Fallback: macOS Keychain (Claude Code stores credentials here when no .credentials.json)
-if [ -z "$ACCOUNT_TOKEN" ] && command -v security &>/dev/null; then
+# Fallback: macOS Keychain — only when using the default credentials path
+if [ -z "$ACCOUNT_TOKEN" ] && [ "${_CREDENTIALS_CUSTOM}" != "set" ] && command -v security &>/dev/null; then
     _keychain_json=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)
     if [ -n "$_keychain_json" ]; then
         ACCOUNT_TOKEN=$(echo "$_keychain_json" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
@@ -205,6 +207,11 @@ refresh_usage_api() {
                 percent_used: .seven_day_sonnet.utilization,
                 percent_remaining: (100 - .seven_day_sonnet.utilization),
                 resets_at: .seven_day_sonnet.resets_at
+            } else null end),
+            extra: (if (.extra_usage.is_enabled // false) then {
+                percent_used: .extra_usage.utilization,
+                used_credits: .extra_usage.used_credits,
+                monthly_limit: .extra_usage.monthly_limit
             } else null end)
         }
     }' > "${USAGE_FILE}.tmp" && mv "${USAGE_FILE}.tmp" "$USAGE_FILE"
@@ -236,13 +243,17 @@ NOW=$(date +%s)
 if [ -f "$USAGE_FILE" ]; then
     # Single jq call to read all cache fields
     IFS='|' read -r CACHE_SOURCE U_SESS_PCT U_SESS_RESETS U_WEEK_PCT U_WEEK_RESETS U_SONNET_PCT \
+        U_EXTRA_PCT U_EXTRA_USED U_EXTRA_LIMIT \
         < <(jq -r '[
             (.source // "legacy"),
             (.metrics.session.percent_used     // ""),
             (.metrics.session.resets_at        // .metrics.session.resets // ""),
             (.metrics.week_all.percent_used    // ""),
             (.metrics.week_all.resets_at       // .metrics.week_all.resets // ""),
-            (.metrics.week_sonnet.percent_used // "")
+            (.metrics.week_sonnet.percent_used // ""),
+            (.metrics.extra.percent_used       // ""),
+            (.metrics.extra.used_credits       // ""),
+            (.metrics.extra.monthly_limit      // "")
         ] | join("|")' "$USAGE_FILE" 2>/dev/null)
 
     if [ -n "$CACHE_SOURCE" ]; then
@@ -307,6 +318,21 @@ if [ -f "$USAGE_FILE" ]; then
             WEEK_SONNET_DISPLAY="📅 ${WEEK_COLOR} ${WEEK_INT}%"
             [ -n "$WEEK_RESET_LABEL" ] && WEEK_SONNET_DISPLAY+=" ↻ ${WEEK_RESET_LABEL}"
         fi
+
+        # Extra usage (pay-as-you-go)
+        EXTRA_DISPLAY=""
+        if [ "$SHOW_EXTRA" = "1" ] && [ -n "$U_EXTRA_PCT" ] && [ "$U_EXTRA_PCT" != "null" ]; then
+            EXTRA_INT="${U_EXTRA_PCT%.*}"
+            make_bar "$EXTRA_INT"
+            EXTRA_DISPLAY="💳 ${BAR_COLOR} ${EXTRA_INT}%"
+            if [ -n "$U_EXTRA_USED" ] && [ -n "$U_EXTRA_LIMIT" ] && \
+               [ "$U_EXTRA_USED" != "null" ] && [ "$U_EXTRA_LIMIT" != "null" ]; then
+                EXTRA_USED_DOLLARS=$(printf '$%.2f' "$(echo "$U_EXTRA_USED / 100" | bc -l 2>/dev/null)" 2>/dev/null)
+                EXTRA_LIMIT_DOLLARS=$(printf '$%.0f' "$(echo "$U_EXTRA_LIMIT / 100" | bc -l 2>/dev/null)" 2>/dev/null)
+                [ -n "$EXTRA_USED_DOLLARS" ] && [ -n "$EXTRA_LIMIT_DOLLARS" ] && \
+                    EXTRA_DISPLAY+=" ${EXTRA_USED_DOLLARS}/${EXTRA_LIMIT_DOLLARS}"
+            fi
+        fi
     fi
 fi
 
@@ -316,7 +342,7 @@ if [ -f "$USAGE_FILE" ] && [ "$REFRESH_INTERVAL" -gt 0 ] 2>/dev/null; then
     [ "$(cache_age_sec)" -gt $(( REFRESH_INTERVAL * 3 )) ] && IS_STALE=1
 fi
 [ "$IS_STALE" = 1 ] && [ -n "$BLOCK_DISPLAY" ] && \
-    BLOCK_DISPLAY=$(echo "$BLOCK_DISPLAY" | sed 's/🔵\|🟢\|🟡\|🟠\|🔴/⚠/')
+    BLOCK_DISPLAY=$(echo "$BLOCK_DISPLAY" | sed -E 's/🔵|🟢|🟡|🟠|🔴/⚠/')
 
 # ── Assemble ──────────────────────────────────────────────────────────────────
 PARTS=()
@@ -328,6 +354,7 @@ fi
 [ -n "$CTX_PERCENT" ]         && PARTS+=("$CTX_COLOR $CTX_LABEL ${CTX_PERCENT}%")
 [ -n "$BLOCK_DISPLAY" ]       && PARTS+=("$BLOCK_DISPLAY")
 [ -n "$WEEK_SONNET_DISPLAY" ] && PARTS+=("$WEEK_SONNET_DISPLAY")
+[ -n "$EXTRA_DISPLAY" ]       && PARTS+=("$EXTRA_DISPLAY")
 # Cost + duration (only if non-zero)
 if [ -n "$COST_STR" ] && [ -n "$DURATION_STR" ]; then
     PARTS+=("$COST_STR ⏱ $DURATION_STR")

@@ -54,7 +54,8 @@ The script uses `https://api.anthropic.com/api/oauth/usage`, an undocumented Ant
 {
   "five_hour": { "utilization": 18.0, "resets_at": "2026-03-27T10:00:00+00:00" },
   "seven_day": { "utilization": 17.0, "resets_at": "2026-04-02T13:00:00+00:00" },
-  "seven_day_sonnet": { "utilization": 10.0, "resets_at": "2026-04-02T13:00:00+00:00" }
+  "seven_day_sonnet": { "utilization": 10.0, "resets_at": "2026-04-02T13:00:00+00:00" },
+  "extra_usage": { "is_enabled": true, "monthly_limit": 2000, "used_credits": 410.0, "utilization": 20.5 }
 }
 ```
 
@@ -67,6 +68,7 @@ Tracked upstream: [anthropics/claude-code#13585](https://github.com/anthropics/c
 | `TIMEZONE` | system | Override for display (e.g. `America/New_York`) |
 | `REFRESH_INTERVAL` | `120` | Seconds between API calls — do not set to 0 (rate limiting) |
 | `SHOW_WEEKLY` | `1` | Set to `0` to hide weekly quota |
+| `SHOW_EXTRA` | `1` | Set to `0` to hide extra usage (pay-as-you-go) |
 | `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache location |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth token source |
 

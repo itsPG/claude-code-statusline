@@ -16,7 +16,11 @@ done
 REPO_RAW="https://raw.githubusercontent.com/itsPG/claude-code-statusline/main"
 HOOKS_DIR="$HOME/.claude/hooks"
 SETTINGS_FILE="$HOME/.claude/settings.json"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/dev/null}")" 2>/dev/null && pwd || echo "")"
+if [ -f "${BASH_SOURCE[0]:-}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+    SCRIPT_DIR=""
+fi
 
 echo "=== Claude Code Status Line Installer ==="
 
@@ -61,14 +65,8 @@ mkdir -p "$HOOKS_DIR"
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/statusline.sh" ]; then
     cp "$SCRIPT_DIR/statusline.sh" "$HOOKS_DIR/statusline.sh"
 else
-    echo "  Local statusline.sh not found."
-    read -rp "Download from GitHub ($REPO_RAW)? [Y/n] " answer
-    if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
-        curl -fsSL "$REPO_RAW/statusline.sh" -o "$HOOKS_DIR/statusline.sh"
-    else
-        echo "  Aborted. Place statusline.sh next to install.sh and re-run."
-        exit 1
-    fi
+    echo "  Downloading from GitHub..."
+    curl -fsSL "$REPO_RAW/statusline.sh" -o "$HOOKS_DIR/statusline.sh"
 fi
 chmod +x "$HOOKS_DIR/statusline.sh"
 
