@@ -60,6 +60,20 @@ else
     warn "bc" "not found — extra usage dollar amounts will be blank"
 fi
 
+# claude CLI (used only for User-Agent version string — non-critical)
+if command -v claude &>/dev/null; then
+    _claude_path=$(command -v claude)
+    _claude_ver=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    ok "claude CLI" "${_claude_ver:-unknown version}  ($_claude_path)"
+    # Warn if claude is in a non-standard PATH that hooks may not inherit
+    case "$_claude_path" in
+        ~/.local/bin/*|/usr/local/bin/*|/opt/homebrew/bin/*) ;;
+        *) warn "claude CLI path" "$_claude_path — verify this is in PATH when hooks run" ;;
+    esac
+else
+    warn "claude CLI" "not in PATH — User-Agent will fall back to hardcoded version (non-critical)"
+fi
+
 # sha256sum / shasum
 if command -v sha256sum &>/dev/null; then
     ok "sha256sum" "found (GNU coreutils)"
@@ -227,7 +241,22 @@ if [ -f "$USAGE_FILE" ]; then
         skip "valid JSON" "skipped (jq not available)"
     fi
 else
-    warn "cache file" "not found (will be created on first successful API call)"
+    warn "cache file" "not found"
+    # Diagnose why the cache might never get written
+    _cache_dir=$(dirname "$USAGE_FILE")
+    if [ ! -d "$_cache_dir" ]; then
+        fail "cache dir exists" "$_cache_dir does not exist — run: mkdir -p $_cache_dir"
+    elif [ ! -w "$_cache_dir" ]; then
+        fail "cache dir writable" "$_cache_dir is not writable (check permissions)"
+    else
+        ok "cache dir writable" "$_cache_dir"
+    fi
+    if [ -z "$ACCOUNT_TOKEN" ]; then
+        info "likely cause: no token → API never called → cache never written"
+    else
+        info "likely cause: API not yet called, or previous API calls failed"
+        info "run debug again after a few seconds to see if cache appears"
+    fi
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
