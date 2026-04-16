@@ -31,8 +31,12 @@ if [ -z "$ACCOUNT_TOKEN" ] && [ "${_CREDENTIALS_CUSTOM}" != "set" ] && command -
     fi
 fi
 if [ -n "$ACCOUNT_TOKEN" ]; then
-    ACCOUNT_HASH=$(echo -n "$ACCOUNT_TOKEN" | sha256sum | cut -c1-8)
-    USAGE_FILE="${USAGE_FILE%.json}-${ACCOUNT_HASH}.json"
+    if command -v sha256sum &>/dev/null; then
+        ACCOUNT_HASH=$(echo -n "$ACCOUNT_TOKEN" | sha256sum | cut -c1-8)
+    elif command -v shasum &>/dev/null; then
+        ACCOUNT_HASH=$(echo -n "$ACCOUNT_TOKEN" | shasum -a 256 | cut -c1-8)
+    fi
+    [ -n "$ACCOUNT_HASH" ] && USAGE_FILE="${USAGE_FILE%.json}-${ACCOUNT_HASH}.json"
 fi
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -301,7 +305,7 @@ if [ -f "$USAGE_FILE" ]; then
                     DATE_PART=$(echo "$U_WEEK_RESETS" | sed 's/ *([^)]*)//' | sed 's/,//')
                     WEEK_EPOCH=$(tz_date "${WEEK_TZ}" -d "$DATE_PART" +%s 2>/dev/null)
                 fi
-                [ -n "$WEEK_EPOCH" ] && \
+                if [ -n "$WEEK_EPOCH" ]; then
                     _NOW=$(date +%s)
                     _DIFF=$(( WEEK_EPOCH - _NOW ))
                     if [ "$_DIFF" -gt 0 ]; then
@@ -311,6 +315,7 @@ if [ -f "$USAGE_FILE" ]; then
                             WEEK_RESET_LABEL="$(( _DIFF / 3600 ))h"
                         fi
                     fi
+                fi
             fi
             make_bar "$WEEK_INT"; WEEK_COLOR="$BAR_COLOR"
         fi
@@ -367,4 +372,4 @@ for part in "${PARTS[@]}"; do
     [ -z "$RESULT" ] && RESULT="$part" || RESULT="$RESULT │ $part"
 done
 
-echo "${RESULT}${REFRESH_SUFFIX}"
+echo "$RESULT"

@@ -258,11 +258,20 @@ else
     else
         ok "cache dir writable" "$_cache_dir"
     fi
+    # Check for stale lock file that could block all refreshes
+    _lock_file="/tmp/statusline-refresh${ACCOUNT_HASH:+-$ACCOUNT_HASH}.lock"
+    if [ -f "$_lock_file" ]; then
+        _lock_pid=$(cat "$_lock_file" 2>/dev/null)
+        if [ -n "$_lock_pid" ] && kill -0 "$_lock_pid" 2>/dev/null; then
+            warn "lock file" "held by PID $_lock_pid (refresh in progress)"
+        else
+            fail "lock file" "stale lock: $_lock_file (PID ${_lock_pid:-?} is dead) — fix: rm $_lock_file"
+        fi
+    fi
     if [ -z "$ACCOUNT_TOKEN" ]; then
         info "likely cause: no token → API never called → cache never written"
     else
-        info "likely cause: API not yet called, or previous API calls failed"
-        info "run debug again after a few seconds to see if cache appears"
+        info "likely cause: first run, or previous API calls failed (see [API] section)"
     fi
 fi
 
@@ -383,7 +392,7 @@ section "RENDER"
 
 if [ -f "$HOOK_FILE" ]; then
     _render_out=$(echo '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":42}}' \
-        | REFRESH_INTERVAL=999999 CREDENTIALS_FILE="$CREDENTIALS_FILE" bash "$HOOK_FILE" 2>/dev/null)
+        | REFRESH_INTERVAL=999999 bash "$HOOK_FILE" 2>/dev/null)
     _render_rc=$?
     if [ "$_render_rc" -eq 0 ] && [ -n "$_render_out" ]; then
         ok "render test" "exit $_render_rc"
