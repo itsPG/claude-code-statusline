@@ -175,6 +175,13 @@ info "expected path: $USAGE_FILE"
 
 if [ -f "$USAGE_FILE" ]; then
     ok "cache file" "exists"
+    if [ ! -w "$USAGE_FILE" ]; then
+        fail "cache file writable" "$USAGE_FILE is not writable — refresh writes will fail silently"
+    elif [ ! -w "$(dirname "$USAGE_FILE")" ]; then
+        fail "cache dir writable" "$(dirname "$USAGE_FILE") is not writable — atomic mv will fail"
+    else
+        ok "cache writable" ""
+    fi
 
     # Age
     if stat --version &>/dev/null 2>&1; then
