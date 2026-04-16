@@ -391,17 +391,54 @@ section "RENDER"
 # ════════════════════════════════════════════════════════════════════════════
 
 if [ -f "$HOOK_FILE" ]; then
+    _render_err_file=$(mktemp)
     _render_out=$(echo '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":42}}' \
-        | REFRESH_INTERVAL=999999 bash "$HOOK_FILE" 2>/dev/null)
+        | REFRESH_INTERVAL=999999 bash "$HOOK_FILE" 2>"$_render_err_file")
     _render_rc=$?
+    _render_err=$(cat "$_render_err_file"); rm -f "$_render_err_file"
+
     if [ "$_render_rc" -eq 0 ] && [ -n "$_render_out" ]; then
-        ok "render test" "exit $_render_rc"
+        ok "render (no refresh)" "exit $_render_rc"
         info "output: $_render_out"
+        # Cross-check: if cache had data, verify it appears in the render output
+        if [ -n "$C_SESS" ] && ! printf '%s' "$_render_out" | grep -q "⏳"; then
+            fail "render: session usage" "cache has session data (${C_SESS%.*}%) but ⏳ missing from output"
+        fi
+        if [ -n "$C_WEEK" ] && [ "${SHOW_WEEKLY:-1}" = "1" ] && ! printf '%s' "$_render_out" | grep -q "📅"; then
+            fail "render: weekly usage" "cache has weekly data (${C_WEEK%.*}%) but 📅 missing from output"
+        fi
+        if [ -n "$C_EXTRA_PCT" ] && [ "${SHOW_EXTRA:-1}" = "1" ] && ! printf '%s' "$_render_out" | grep -q "💳"; then
+            fail "render: extra usage" "cache has extra data (${C_EXTRA_PCT%.*}%) but 💳 missing from output"
+        fi
     elif [ "$_render_rc" -eq 0 ] && [ -z "$_render_out" ]; then
-        warn "render test" "exit 0 but output is empty"
+        warn "render (no refresh)" "exit 0 but output is empty"
     else
-        fail "render test" "exit $_render_rc"
+        fail "render (no refresh)" "exit $_render_rc"
     fi
+    [ -n "$_render_err" ] && warn "render stderr" "$_render_err"
+
+    # ── Force refresh test: actually call API + write cache → render ──────────
+    _test_dir=$(mktemp -d)
+    _fresh_err_file=$(mktemp)
+    _fresh_out=$(echo '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":42}}' \
+        | USAGE_FILE="$_test_dir/usage.json" bash "$HOOK_FILE" 2>"$_fresh_err_file")
+    _fresh_rc=$?
+    _fresh_err=$(cat "$_fresh_err_file"); rm -f "$_fresh_err_file"
+    _written=$(ls "$_test_dir"/*.json 2>/dev/null | head -1)
+
+    if [ -n "$_written" ]; then
+        ok "force refresh → cache write" "cache written"
+        if [ -n "$_fresh_out" ]; then
+            ok "force refresh → render" "exit $_fresh_rc"
+            info "output: $_fresh_out"
+        else
+            fail "force refresh → render" "cache written but output is empty (exit $_fresh_rc)"
+        fi
+    else
+        fail "force refresh → cache write" "cache not created — API call or write failed"
+    fi
+    [ -n "$_fresh_err" ] && warn "force refresh stderr" "$_fresh_err"
+    rm -rf "$_test_dir"
 else
     skip "render test" "skipped — hook file not installed"
 fi
