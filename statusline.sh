@@ -15,10 +15,9 @@ REFRESH_INTERVAL="${REFRESH_INTERVAL:-120}"           # seconds between API call
 SHOW_WEEKLY="${SHOW_WEEKLY:-1}"                      # set to 0 to hide weekly + sonnet quotas
 SHOW_EXTRA="${SHOW_EXTRA:-1}"                        # set to 0 to hide extra usage (pay-as-you-go)
 USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
-CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/.claude/.credentials.json}"
-
 # ── Resolve per-account cache (hash token → separate cache per account) ──────
 _CREDENTIALS_CUSTOM="${CREDENTIALS_FILE+set}"   # was CREDENTIALS_FILE explicitly set?
+CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/.claude/.credentials.json}"
 ACCOUNT_TOKEN=""
 if [ -f "$CREDENTIALS_FILE" ]; then
     ACCOUNT_TOKEN=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
