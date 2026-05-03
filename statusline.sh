@@ -113,7 +113,7 @@ make_bar() {
 JSON=$(cat)
 
 # ── Parse all stdin fields in a single jq call ───────────────────────────────
-IFS='|' read -r J_MODEL_DISPLAY J_MODEL_RAW J_CTX_PCT J_CTX_SIZE J_COST J_DURATION J_CWD \
+IFS='|' read -r J_MODEL_DISPLAY J_MODEL_RAW J_CTX_PCT J_CTX_SIZE J_COST J_DURATION J_CWD J_EFFORT \
     < <(echo "$JSON" | jq -r '[
         (if .model | type == "object" then .model.display_name // "" else "" end),
         (if .model | type == "string" then .model else "" end),
@@ -121,7 +121,8 @@ IFS='|' read -r J_MODEL_DISPLAY J_MODEL_RAW J_CTX_PCT J_CTX_SIZE J_COST J_DURATI
         (.context_window.context_window_size // 0),
         (.cost.total_cost_usd // ""),
         (.cost.total_duration_ms // ""),
-        (.workspace.current_dir // "")
+        (.workspace.current_dir // ""),
+        (.effort.level // "")
     ] | join("|")' 2>/dev/null)
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -131,23 +132,29 @@ MODEL=$(echo "$MODEL" | sed 's/Default (\(.*\))/\1/' | sed 's/Claude //' | sed '
 case "$MODEL" in
   claude-sonnet-4-6*|Sonnet\ 4.6*) MODEL="Snt 4.6" ;;
   claude-sonnet-4-5*|Sonnet\ 4.5*) MODEL="Snt 4.5" ;;
+  claude-opus-4-7*|Opus\ 4.7*)     MODEL="Opus 4.7" ;;
   claude-opus-4-6*|Opus\ 4.6*)     MODEL="Opus 4.6" ;;
   claude-opus-4-5*|Opus\ 4.5*)     MODEL="Opus 4.5" ;;
   claude-haiku-4*|Haiku\ 4*)       MODEL="Haiku 4"  ;;
 esac
 
-# ── Effort level (from settings.json — not yet in stdin JSON) ────────────────
+# ── Effort level ─────────────────────────────────────────────────────────────
+# Modern Claude Code (≥ ~2.1) sends effort.level in stdin JSON. Older versions
+# stored it in settings.json as effortLevel — kept as a fallback.
 EFFORT_LABEL=""
-SETTINGS_FILE="$HOME/.claude/settings.json"
-if [ -f "$SETTINGS_FILE" ]; then
-    case "$(jq -r '.effortLevel // empty' "$SETTINGS_FILE" 2>/dev/null)" in
-        low)    EFFORT_LABEL="lo" ;;
-        medium) EFFORT_LABEL="md" ;;
-        high)   EFFORT_LABEL="hi" ;;
-        xhigh)  EFFORT_LABEL="xh" ;;
-        max)    EFFORT_LABEL="mx" ;;
-    esac
+EFFORT_RAW="$J_EFFORT"
+if [ -z "$EFFORT_RAW" ]; then
+    SETTINGS_FILE="$HOME/.claude/settings.json"
+    [ -f "$SETTINGS_FILE" ] && \
+        EFFORT_RAW=$(jq -r '.effortLevel // empty' "$SETTINGS_FILE" 2>/dev/null)
 fi
+case "$EFFORT_RAW" in
+    low)    EFFORT_LABEL="lo" ;;
+    medium) EFFORT_LABEL="md" ;;
+    high)   EFFORT_LABEL="hi" ;;
+    xhigh)  EFFORT_LABEL="xh" ;;
+    max)    EFFORT_LABEL="mx" ;;
+esac
 
 # ── Context window ────────────────────────────────────────────────────────────
 CTX_PERCENT="${J_CTX_PCT:-0}"
