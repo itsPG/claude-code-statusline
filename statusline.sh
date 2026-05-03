@@ -144,6 +144,7 @@ if [ -f "$SETTINGS_FILE" ]; then
         low)    EFFORT_LABEL="lo" ;;
         medium) EFFORT_LABEL="md" ;;
         high)   EFFORT_LABEL="hi" ;;
+        xhigh)  EFFORT_LABEL="xh" ;;
         max)    EFFORT_LABEL="mx" ;;
     esac
 fi
