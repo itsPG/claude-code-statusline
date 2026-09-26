@@ -10,7 +10,7 @@ Opus 4.6 │ 🟢 Ctx 42% │ ⏳ 🟡 35% ↻ 2h30m │ 📅 🔵 17% ↻ 2d �
 
 Claude Code has rate limits but no built-in way to see them while you work. The `/usage` command exists, but you have to stop what you're doing to check it manually.
 
-This script **fetches your usage via API every 2 minutes** and displays the results directly in your status line — session and weekly rate limits with reset countdowns, all at a glance.
+This script reads your session and weekly rate limits from the status line input Claude Code already provides (Claude Code 2.1.80+, Pro/Max plans), **falls back to the usage API every 2 minutes** for anything that input doesn't cover, and displays the results directly in your status line — rate limits with reset countdowns, all at a glance.
 
 ## What you get
 
@@ -31,11 +31,13 @@ For **1M/2M context windows**, thresholds are stricter: 🔵 <12% │ 🟢 <29% 
 
 ```
 Claude Code → JSON stdin → statusline.sh → formatted status string
-                              ↓ (if cache > 120s old)
+                              ↓ (only if needed and cache > 120s old)
                          curl → Anthropic OAuth API → ~/.claude/usage-exact.json
 ```
 
-Every 2 minutes (configurable), the script calls the Anthropic usage API with your OAuth token. The call takes ~200ms and runs inline — no background processes, no tmux, no scraping.
+Session (5h) and weekly (7d) usage come from the `rate_limits` field Claude Code passes on stdin whenever it is present — always current, no network call. That field exists only on claude.ai Pro/Max plans, only after the first API response of a session, and each window may be absent independently.
+
+The usage API is called (at most every 2 minutes, configurable) only when something shown isn't covered by stdin: a missing `rate_limits` window, or extra usage (`SHOW_EXTRA=1`, API-only). With `SHOW_EXTRA=0` and both windows on stdin, no API call is made at all. The call takes ~200ms and runs inline — no background processes, no tmux, no scraping.
 
 The OAuth token is read from `~/.claude/.credentials.json`, which Claude Code maintains automatically during active sessions. If the token is expired or the API is unreachable, the script silently falls back to cached data or displays without usage info.
 
@@ -109,6 +111,9 @@ bash test_statusline.sh
 
 ## Troubleshooting
 
+**⚠ in place of the session color dot?**
+The session value came from the API cache and the cache is older than 3× `REFRESH_INTERVAL`. It never appears when the session value comes from Claude Code's stdin.
+
 **Usage display frozen / not updating?**
 You may have been rate-limited by the Anthropic API (e.g. `REFRESH_INTERVAL` was too low or set to `0`). Wait a few minutes, then test the API directly — a `rate_limit_error` response confirms it. Once the rate limit clears, the statusline resumes auto-updating.
 
@@ -162,6 +167,7 @@ Forked from [ohugonnot/claude-code-statusline](https://github.com/ohugonnot/clau
 - Shorter default refresh interval (120s instead of 300s)
 - Per-account usage cache (supports switching between Anthropic accounts)
 - Installer prompts before downloading from GitHub when local file is not found
+- Extra usage (pay-as-you-go) segment
 
 ## License
 

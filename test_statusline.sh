@@ -455,6 +455,96 @@ OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_perce
     USAGE_FILE=/dev/null SETTINGS_FILE=/dev/null)
 assert_not_contains "no effort suffix when absent" "Snt 4.6/" "$OUT"
 
+# Portable helpers (GNU coreutils on Linux / BSD on macOS)
+touch_ago() {  # <minutes> <file> — set mtime N minutes in the past
+    local ts
+    ts=$(date -d "$1 minutes ago" '+%Y%m%d%H%M.%S' 2>/dev/null || date -v-"$1"M '+%Y%m%d%H%M.%S')
+    touch -t "$ts" "$2"
+}
+epoch_in() {  # <±N hours> → Unix epoch seconds, N hours from now
+    date -d "$1 hours" +%s 2>/dev/null || date -v"${1}"H +%s
+}
+
+# Test 30 — Native stdin rate_limits are preferred over the cache, and never stale
+echo ""
+echo "-- Test 30: native stdin rate_limits preferred --"
+USAGE_OLD=$(mktemp /tmp/test-usage-old-XXXX.json); TMPFILES+=("$USAGE_OLD")
+echo '{"source":"api","metrics":{"session":{"percent_used":88.0,"percent_remaining":12.0,"resets_at":null}}}' > "$USAGE_OLD"
+touch_ago 60 "$USAGE_OLD"   # stale cache that must be ignored
+FUTURE_EPOCH=$(epoch_in +2)
+OUT=$(run_statusline "{\"model\":\"claude-sonnet-4-6\",\"context_window\":{\"used_percentage\":0},\"rate_limits\":{\"five_hour\":{\"used_percentage\":12.7,\"resets_at\":$FUTURE_EPOCH}}}" \
+    USAGE_FILE="$USAGE_OLD" REFRESH_INTERVAL=300)
+assert_contains "uses stdin 12% with countdown" "⏳ 🔵 12% ↻ " "$OUT"   # exact minutes depend on timing
+assert_not_contains "ignores cache 88%" "88%" "$OUT"
+assert_not_contains "stdin source never stale" "⚠" "$OUT"
+
+# Test 31 — stdin session WITHOUT resets_at keeps the live %, must not zero it
+echo ""
+echo "-- Test 31: stdin session without resets_at --"
+OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0},"rate_limits":{"five_hour":{"used_percentage":42}}}' \
+    USAGE_FILE=/dev/null REFRESH_INTERVAL=999999)
+assert_contains "stdin pct kept without resets_at" "⏳ 🟢 42%" "$OUT"
+assert_not_contains "no countdown without resets_at" "↻" "$OUT"
+
+# Test 32 — Session resets to 0% once stdin resets_at is in the past
+echo ""
+echo "-- Test 32: stdin session reset to 0% after window rolls over --"
+PAST_EPOCH=$(epoch_in -1)
+OUT=$(run_statusline "{\"model\":\"claude-sonnet-4-6\",\"context_window\":{\"used_percentage\":0},\"rate_limits\":{\"five_hour\":{\"used_percentage\":75,\"resets_at\":$PAST_EPOCH}}}" \
+    USAGE_FILE=/dev/null REFRESH_INTERVAL=999999)
+assert_not_contains "stale 75% suppressed" "75%" "$OUT"
+assert_contains "session shows 0% after reset" "⏳ 🔵 0%" "$OUT"
+
+# Test 33 — stdin seven_day shown with SHOW_WEEKLY=1, hidden with SHOW_WEEKLY=0
+echo ""
+echo "-- Test 33: stdin seven_day --"
+WEEK_EPOCH_IN=$(epoch_in +50)
+STDIN_7D="{\"model\":\"claude-sonnet-4-6\",\"context_window\":{\"used_percentage\":0},\"rate_limits\":{\"five_hour\":{\"used_percentage\":10},\"seven_day\":{\"used_percentage\":37,\"resets_at\":$WEEK_EPOCH_IN}}}"
+OUT=$(run_statusline "$STDIN_7D" USAGE_FILE=/dev/null SHOW_WEEKLY=1)
+assert_contains "seven_day 37% with day countdown" "📅 🟢 37% ↻ 2d" "$OUT"
+OUT=$(run_statusline "$STDIN_7D" USAGE_FILE=/dev/null SHOW_WEEKLY=0)
+assert_not_contains "weekly hidden with SHOW_WEEKLY=0" "📅" "$OUT"
+
+# Test 34 — Per-window fallback: stdin has five_hour only → weekly + extra from cache
+echo ""
+echo "-- Test 34: missing stdin window falls back to cache --"
+USAGE_MIX=$(mktemp /tmp/test-usage-mix-XXXX.json); TMPFILES+=("$USAGE_MIX")
+echo '{"source":"api","metrics":{"session":{"percent_used":88.0,"resets_at":null},"week_all":{"percent_used":61.0,"resets_at":null},"extra":{"percent_used":20.5,"used_credits":410.0,"monthly_limit":2000}}}' > "$USAGE_MIX"
+OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0},"rate_limits":{"five_hour":{"used_percentage":12}}}' \
+    USAGE_FILE="$USAGE_MIX" REFRESH_INTERVAL=999999 SHOW_WEEKLY=1 SHOW_EXTRA=1)
+assert_contains "session from stdin" "⏳ 🔵 12%" "$OUT"
+assert_contains "weekly from cache" "📅 🟡 61%" "$OUT"
+assert_contains "extra from cache" "💳 🟢 20%" "$OUT"
+
+# Test 35 — API is called only when stdin can't cover the displayed metrics
+echo ""
+echo "-- Test 35: API call gating --"
+GATE_DIR=$(mktemp -d /tmp/test-gate-XXXX)
+cat > "$GATE_DIR/curl" <<'FAKE'
+#!/bin/bash
+touch "$GATE_MARKER"
+echo '{"five_hour":{"utilization":50.0,"resets_at":null}}'
+FAKE
+printf '#!/bin/bash\necho "2.1.0 (Claude Code)"\n' > "$GATE_DIR/claude"
+chmod +x "$GATE_DIR/curl" "$GATE_DIR/claude"
+echo '{"claudeAiOauth":{"accessToken":"test-token"}}' > "$GATE_DIR/creds.json"
+run_gated() {  # <stdin json> <extra env...> → 1 if the fake curl ran, else 0
+    local json="$1"; shift
+    rm -f "$GATE_DIR"/usage*.json "$GATE_DIR/called"
+    echo "$json" | env PATH="$GATE_DIR:$PATH" GATE_MARKER="$GATE_DIR/called" XDG_RUNTIME_DIR="$GATE_DIR" \
+        CREDENTIALS_FILE="$GATE_DIR/creds.json" USAGE_FILE="$GATE_DIR/usage.json" REFRESH_INTERVAL=0 \
+        "$@" bash "$STATUSLINE_SH" >/dev/null 2>&1
+    [ -e "$GATE_DIR/called" ] && echo 1 || echo 0
+}
+STDIN_BOTH="{\"model\":\"claude-sonnet-4-6\",\"rate_limits\":{\"five_hour\":{\"used_percentage\":10},\"seven_day\":{\"used_percentage\":20}}}"
+STDIN_5H='{"model":"claude-sonnet-4-6","rate_limits":{"five_hour":{"used_percentage":10}}}'
+assert_eq "stdin covers all, SHOW_EXTRA=0 → no API" "0" "$(run_gated "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_EXTRA=0)"
+assert_eq "SHOW_EXTRA=1 still needs API"            "1" "$(run_gated "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_EXTRA=1)"
+assert_eq "stdin lacks seven_day → API"             "1" "$(run_gated "$STDIN_5H" SHOW_WEEKLY=1 SHOW_EXTRA=0)"
+assert_eq "no weekly wanted, five_hour only → no API" "0" "$(run_gated "$STDIN_5H" SHOW_WEEKLY=0 SHOW_EXTRA=0)"
+assert_eq "no stdin rate_limits → API"              "1" "$(run_gated '{"model":"claude-sonnet-4-6"}' SHOW_WEEKLY=0 SHOW_EXTRA=0)"
+rm -rf "$GATE_DIR"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

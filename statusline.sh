@@ -123,8 +123,11 @@ JSON=$(cat)
 
 # ── Parse all stdin fields in a single jq call ───────────────────────────────
 # Joined on US (0x1f), not "|": a "|" in the workspace path or model name would
-# shift every later field. US is non-whitespace so read preserves empty fields.
+# shift every later field. US is non-whitespace so read preserves empty fields
+# (e.g. absent rate_limits). rate_limits.* is native since Claude Code 2.1.80 (Pro/Max
+# only, after the first API response); resets_at there is Unix epoch seconds.
 IFS=$'\x1f' read -r J_MODEL_DISPLAY J_MODEL_RAW J_CTX_PCT J_CTX_SIZE J_COST J_DURATION J_CWD J_EFFORT \
+    J_RL_5H_PCT J_RL_5H_RESET J_RL_7D_PCT J_RL_7D_RESET \
     < <(echo "$JSON" | jq -r '[
         (if .model | type == "object" then .model.display_name // "" else "" end),
         (if .model | type == "string" then .model else "" end),
@@ -133,7 +136,11 @@ IFS=$'\x1f' read -r J_MODEL_DISPLAY J_MODEL_RAW J_CTX_PCT J_CTX_SIZE J_COST J_DU
         (.cost.total_cost_usd // ""),
         (.cost.total_duration_ms // ""),
         (.workspace.current_dir // ""),
-        (.effort.level // "")
+        (.effort.level // ""),
+        (.rate_limits.five_hour.used_percentage // ""),
+        (.rate_limits.five_hour.resets_at // ""),
+        (.rate_limits.seven_day.used_percentage // ""),
+        (.rate_limits.seven_day.resets_at // "")
     ] | join("\u001f")' 2>/dev/null)
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -246,11 +253,19 @@ refresh_usage_api() {
     fi
 }
 
+# Native stdin rate_limits cover session + weekly. The API is still needed for extra
+# usage (SHOW_EXTRA) and as a fallback for any window stdin does not provide.
+NEED_API=1
+if [ -n "$J_RL_5H_PCT" ] && { [ "$SHOW_WEEKLY" != "1" ] || [ -n "$J_RL_7D_PCT" ]; } && \
+   [ "$SHOW_EXTRA" != "1" ]; then
+    NEED_API=0
+fi
+
 [[ "$REFRESH_INTERVAL" =~ ^[0-9]+$ ]] || REFRESH_INTERVAL=120
 
 # Lock outside world-writable /tmp to avoid a symlink/clobber on shared hosts.
 LOCK_FILE="${XDG_RUNTIME_DIR:-$HOME/.claude}/statusline-refresh${ACCOUNT_HASH:+-$ACCOUNT_HASH}.lock"
-if [ "$(cache_age_sec)" -gt "$REFRESH_INTERVAL" ]; then
+if [ "$NEED_API" = 1 ] && [ "$(cache_age_sec)" -gt "$REFRESH_INTERVAL" ]; then
     if command -v flock &>/dev/null; then
         # 2>/dev/null: if the lock dir is missing, skip the refresh quietly
         ( flock -n 9 || exit 0; refresh_usage_api ) 9>"$LOCK_FILE" 2>/dev/null
@@ -269,10 +284,25 @@ if [ "$(cache_age_sec)" -gt "$REFRESH_INTERVAL" ]; then
     fi
 fi
 
-# ── Read cached usage metrics ─────────────────────────────────────────────────
-BLOCK_DISPLAY="" WEEK_SONNET_DISPLAY=""
+# ── Resolve usage metrics: native stdin (preferred) → cache (fallback) ──────
+BLOCK_DISPLAY="" WEEK_SONNET_DISPLAY="" EXTRA_DISPLAY=""
 NOW=$(date +%s)
 
+SESS_PCT="" SESS_EPOCH="" SESS_FROM_CACHE=0
+WEEK_PCT="" WEEK_EPOCH=""
+
+# Leave the epoch empty when no reset is sent — num("") is "0", which would read as
+# a past reset and wrongly zero the live percentage.
+if [ -n "$J_RL_5H_PCT" ]; then
+    SESS_PCT="$J_RL_5H_PCT"
+    [ -n "$J_RL_5H_RESET" ] && SESS_EPOCH="$(num "$J_RL_5H_RESET")"
+fi
+if [ "$SHOW_WEEKLY" = "1" ] && [ -n "$J_RL_7D_PCT" ]; then
+    WEEK_PCT="$J_RL_7D_PCT"
+    [ -n "$J_RL_7D_RESET" ] && WEEK_EPOCH="$(num "$J_RL_7D_RESET")"
+fi
+
+# The cache only fills metrics stdin didn't provide; extra usage is cache-only.
 if [ -f "$USAGE_FILE" ]; then
     # Single jq call to read all cache fields
     IFS=$'\x1f' read -r CACHE_SOURCE U_SESS_PCT U_SESS_RESETS U_WEEK_PCT U_WEEK_RESETS U_SONNET_PCT \
@@ -291,40 +321,25 @@ if [ -f "$USAGE_FILE" ]; then
 
     if [ -n "$CACHE_SOURCE" ]; then
         # Session block
-        if [ -n "$U_SESS_PCT" ] && [ "$U_SESS_PCT" != "null" ]; then
-            SESS_INT="$(num "$U_SESS_PCT")"
-            REMAIN_STR=""
-            RESET_EPOCH=""
+        if [ -z "$SESS_PCT" ] && [ -n "$U_SESS_PCT" ] && [ "$U_SESS_PCT" != "null" ]; then
+            SESS_PCT="$U_SESS_PCT"; SESS_FROM_CACHE=1
             if [ -n "$U_SESS_RESETS" ] && [ "$U_SESS_RESETS" != "null" ]; then
                 if [ "$CACHE_SOURCE" = "api" ]; then
-                    RESET_EPOCH=$(iso_to_epoch "$U_SESS_RESETS")
+                    SESS_EPOCH=$(iso_to_epoch "$U_SESS_RESETS")
                 else
                     RESET_TZ=$(echo "$U_SESS_RESETS" | sed -n 's/.*(\([^)]*\)).*/\1/p')
                     [ -z "$RESET_TZ" ] && RESET_TZ="${TIMEZONE}"
                     RESET_TIME_STR=$(echo "$U_SESS_RESETS" | sed 's/ *([^)]*)//')
-                    RESET_EPOCH=$(tz_date "${RESET_TZ}" -d "today $RESET_TIME_STR" +%s 2>/dev/null)
-                    [ -n "$RESET_EPOCH" ] && [ "$RESET_EPOCH" -le "$NOW" ] && \
-                        RESET_EPOCH=$(tz_date "${RESET_TZ}" -d "tomorrow $RESET_TIME_STR" +%s 2>/dev/null)
+                    SESS_EPOCH=$(tz_date "${RESET_TZ}" -d "today $RESET_TIME_STR" +%s 2>/dev/null)
+                    [ -n "$SESS_EPOCH" ] && [ "$SESS_EPOCH" -le "$NOW" ] && \
+                        SESS_EPOCH=$(tz_date "${RESET_TZ}" -d "tomorrow $RESET_TIME_STR" +%s 2>/dev/null)
                 fi
-                if [ -n "$RESET_EPOCH" ] && [ "$RESET_EPOCH" -gt "$NOW" ]; then
-                    REMAIN_STR=$(format_remaining $(( RESET_EPOCH - NOW )))
-                elif [ -n "$RESET_EPOCH" ] && [ "$RESET_EPOCH" -le "$NOW" ]; then
-                    # Session has reset since last API call — usage is back to ~0%
-                    SESS_INT=0
-                fi
-            fi
-            make_bar "$SESS_INT"
-            if [ -n "$REMAIN_STR" ]; then
-                BLOCK_DISPLAY="⏳ ${BAR_COLOR} ${SESS_INT}% ↻ ${REMAIN_STR}"
-            else
-                BLOCK_DISPLAY="⏳ ${BAR_COLOR} ${SESS_INT}%"
             fi
         fi
 
-        # Weekly + Sonnet (opt-in)
-        WEEK_INT="" WEEK_COLOR="" WEEK_RESET_LABEL=""
-        if [ "$SHOW_WEEKLY" = "1" ] && [ -n "$U_WEEK_PCT" ] && [ "$U_WEEK_PCT" != "null" ]; then
-            WEEK_INT="$(num "$U_WEEK_PCT")"
+        # Weekly (opt-in)
+        if [ "$SHOW_WEEKLY" = "1" ] && [ -z "$WEEK_PCT" ] && [ -n "$U_WEEK_PCT" ] && [ "$U_WEEK_PCT" != "null" ]; then
+            WEEK_PCT="$U_WEEK_PCT"
             if [ -n "$U_WEEK_RESETS" ] && [ "$U_WEEK_RESETS" != "null" ]; then
                 if [ "$CACHE_SOURCE" = "api" ]; then
                     WEEK_EPOCH=$(iso_to_epoch "$U_WEEK_RESETS")
@@ -334,27 +349,10 @@ if [ -f "$USAGE_FILE" ]; then
                     DATE_PART=$(echo "$U_WEEK_RESETS" | sed 's/ *([^)]*)//' | sed 's/,//')
                     WEEK_EPOCH=$(tz_date "${WEEK_TZ}" -d "$DATE_PART" +%s 2>/dev/null)
                 fi
-                if [ -n "$WEEK_EPOCH" ]; then
-                    _NOW=$(date +%s)
-                    _DIFF=$(( WEEK_EPOCH - _NOW ))
-                    if [ "$_DIFF" -gt 0 ]; then
-                        if [ "$_DIFF" -ge 86400 ]; then
-                            WEEK_RESET_LABEL="$(( _DIFF / 86400 ))d"
-                        else
-                            WEEK_RESET_LABEL="$(( _DIFF / 3600 ))h"
-                        fi
-                    fi
-                fi
             fi
-            make_bar "$WEEK_INT"; WEEK_COLOR="$BAR_COLOR"
-        fi
-        if [ -n "$WEEK_INT" ]; then
-            WEEK_SONNET_DISPLAY="📅 ${WEEK_COLOR} ${WEEK_INT}%"
-            [ -n "$WEEK_RESET_LABEL" ] && WEEK_SONNET_DISPLAY+=" ↻ ${WEEK_RESET_LABEL}"
         fi
 
         # Extra usage (pay-as-you-go)
-        EXTRA_DISPLAY=""
         if [ "$SHOW_EXTRA" = "1" ] && [ -n "$U_EXTRA_PCT" ] && [ "$U_EXTRA_PCT" != "null" ]; then
             EXTRA_INT="$(num "$U_EXTRA_PCT")"
             make_bar "$EXTRA_INT"
@@ -369,9 +367,41 @@ if [ -f "$USAGE_FILE" ]; then
     fi
 fi
 
+# ── Render session + weekly ───────────────────────────────────────────────────
+if [ -n "$SESS_PCT" ]; then
+    SESS_INT="$(num "$SESS_PCT")"
+    REMAIN_STR=""
+    if [ -n "$SESS_EPOCH" ] && [ "$SESS_EPOCH" -gt "$NOW" ] 2>/dev/null; then
+        REMAIN_STR=$(format_remaining $(( SESS_EPOCH - NOW )))
+    elif [ -n "$SESS_EPOCH" ] && [ "$SESS_EPOCH" -le "$NOW" ] 2>/dev/null; then
+        # Session window has rolled over since the data was captured — usage is back to ~0%
+        SESS_INT=0
+    fi
+    make_bar "$SESS_INT"
+    BLOCK_DISPLAY="⏳ ${BAR_COLOR} ${SESS_INT}%"
+    [ -n "$REMAIN_STR" ] && BLOCK_DISPLAY+=" ↻ ${REMAIN_STR}"
+fi
+
+if [ -n "$WEEK_PCT" ]; then
+    WEEK_INT="$(num "$WEEK_PCT")"
+    WEEK_RESET_LABEL=""
+    if [ -n "$WEEK_EPOCH" ] && [ "$WEEK_EPOCH" -gt "$NOW" ] 2>/dev/null; then
+        _DIFF=$(( WEEK_EPOCH - NOW ))
+        if [ "$_DIFF" -ge 86400 ]; then
+            WEEK_RESET_LABEL="$(( _DIFF / 86400 ))d"
+        else
+            WEEK_RESET_LABEL="$(( _DIFF / 3600 ))h"
+        fi
+    fi
+    make_bar "$WEEK_INT"
+    WEEK_SONNET_DISPLAY="📅 ${BAR_COLOR} ${WEEK_INT}%"
+    [ -n "$WEEK_RESET_LABEL" ] && WEEK_SONNET_DISPLAY+=" ↻ ${WEEK_RESET_LABEL}"
+fi
+
 # ── Stale indicator — replace color dot with ⚠ when cache is stale ──────────
+# Only when the session came from the cache: stdin rate_limits are always current.
 IS_STALE=0
-if [ -f "$USAGE_FILE" ] && [ "$REFRESH_INTERVAL" -gt 0 ] 2>/dev/null; then
+if [ "$SESS_FROM_CACHE" = 1 ] && [ -f "$USAGE_FILE" ] && [ "$REFRESH_INTERVAL" -gt 0 ] 2>/dev/null; then
     [ "$(cache_age_sec)" -gt $(( REFRESH_INTERVAL * 3 )) ] && IS_STALE=1
 fi
 [ "$IS_STALE" = 1 ] && [ -n "$BLOCK_DISPLAY" ] && \
