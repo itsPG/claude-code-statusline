@@ -84,7 +84,7 @@ Tracked upstream: [anthropics/claude-code#13585](https://github.com/anthropics/c
 | `REFRESH_INTERVAL` | `120` | Seconds between API calls — do not set to 0 (rate limiting) |
 | `SHOW_WEEKLY` | `1` | Set to `0` to hide weekly quota |
 | `SHOW_EXTRA` | `0` | Set to `1` to show extra usage (pay-as-you-go). Off by default so session/weekly come purely from stdin with no API calls |
-| `SHOW_FABLE` | `0` | Set to `1` to show the Fable weekly quota (API-only) |
+| `SHOW_FABLE` | `0` | Set to `1` to show the Fable weekly quota as a `🔮` segment after `📅` (API-only; countdown only when `📅` is hidden) |
 | `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache base path (suffixed `-acct-<hash>`) |
 | `ACCOUNT_FILE` | `~/.claude.json` | Source of `oauthAccount.accountUuid` / `organizationUuid` for the cache key |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth token source |

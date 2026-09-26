@@ -418,14 +418,13 @@ if [ -n "$SESS_PCT" ]; then
     [ -n "$REMAIN_STR" ] && BLOCK_DISPLAY+=" ↻ ${REMAIN_STR}"
 fi
 
-# "📅 🟢 30% / Fable 🟢 24% ↻ 5d" — the countdown is the all-models window's, or
-# Fable's own when the all-models quota isn't shown.
 WEEK_RESET_LABEL=""
 if [ -n "$WEEK_PCT" ]; then
     WEEK_INT="$(num "$WEEK_PCT")"
     [ -n "$WEEK_EPOCH" ] && WEEK_RESET_LABEL=$(format_days $(( $(num "$WEEK_EPOCH") - NOW )))
     make_bar "$WEEK_INT"
     WEEK_SONNET_DISPLAY="📅 ${BAR_COLOR} ${WEEK_INT}%"
+    [ -n "$WEEK_RESET_LABEL" ] && WEEK_SONNET_DISPLAY+=" ↻ ${WEEK_RESET_LABEL}"
 fi
 # Cache older than 3 missed refresh windows → ⚠ in place of the color dot of any value
 # read from it (session when stdin lacked it, and Fable, which is cache-only).
@@ -434,20 +433,21 @@ if [ -f "$USAGE_FILE" ] && [ "$REFRESH_INTERVAL" -gt 0 ] 2>/dev/null; then
     [ "$(cache_age_sec)" -gt $(( REFRESH_INTERVAL * 3 )) ] && CACHE_STALE=1
 fi
 
+# Fable weekly: "🔮 🟢 24%". It resets with the all-models week, so the countdown is only
+# added when the 📅 segment (which carries it) isn't shown.
+FABLE_DISPLAY=""
 if [ -n "$FABLE_PCT" ]; then
     FABLE_INT="$(num "$FABLE_PCT")"
     # Window rolled over since the cache was written — usage is back to ~0%
     [ -n "$FABLE_EPOCH" ] && [ "$(num "$FABLE_EPOCH")" -le "$NOW" ] && FABLE_INT=0
     make_bar "$FABLE_INT"
     [ "$CACHE_STALE" = 1 ] && BAR_COLOR="⚠"
-    if [ -n "$WEEK_SONNET_DISPLAY" ]; then
-        WEEK_SONNET_DISPLAY+=" / Fable ${BAR_COLOR} ${FABLE_INT}%"
-    else
-        WEEK_SONNET_DISPLAY="📅 Fable ${BAR_COLOR} ${FABLE_INT}%"
-        [ -n "$FABLE_EPOCH" ] && WEEK_RESET_LABEL=$(format_days $(( $(num "$FABLE_EPOCH") - NOW )))
+    FABLE_DISPLAY="🔮 ${BAR_COLOR} ${FABLE_INT}%"
+    if [ -z "$WEEK_SONNET_DISPLAY" ] && [ -n "$FABLE_EPOCH" ]; then
+        _fable_reset=$(format_days $(( $(num "$FABLE_EPOCH") - NOW )))
+        [ -n "$_fable_reset" ] && FABLE_DISPLAY+=" ↻ ${_fable_reset}"
     fi
 fi
-[ -n "$WEEK_SONNET_DISPLAY" ] && [ -n "$WEEK_RESET_LABEL" ] && WEEK_SONNET_DISPLAY+=" ↻ ${WEEK_RESET_LABEL}"
 
 # ── Stale indicator — replace the session color dot with ⚠ ───────────────────
 # Only when the session came from the cache: stdin rate_limits are always current.
@@ -466,6 +466,7 @@ fi
 [ -n "$CTX_PERCENT" ]         && PARTS+=("$CTX_COLOR $CTX_LABEL ${CTX_PERCENT}%")
 [ -n "$BLOCK_DISPLAY" ]       && PARTS+=("$BLOCK_DISPLAY")
 [ -n "$WEEK_SONNET_DISPLAY" ] && PARTS+=("$WEEK_SONNET_DISPLAY")
+[ -n "$FABLE_DISPLAY" ]       && PARTS+=("$FABLE_DISPLAY")
 [ -n "$EXTRA_DISPLAY" ]       && PARTS+=("$EXTRA_DISPLAY")
 # Cost + duration (only if non-zero)
 if [ -n "$COST_STR" ] && [ -n "$DURATION_STR" ]; then

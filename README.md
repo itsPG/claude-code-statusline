@@ -23,7 +23,8 @@ For **1M/2M context windows**, thresholds are stricter: 🔵 <12% │ 🟢 <29% 
 | **Model** | `Opus 4.6` | Active model. With effort set: `Opus 4.6/mx` |
 | **Context** | `🟢 Ctx 42%` | Context window fill. Shows `1M`/`2M` for large context (with stricter color thresholds) |
 | **Session** | `⏳ 🟡 35% ↻ 2h30m` | 5-hour session quota + countdown to reset |
-| **Weekly** | `📅 🔵 17% ↻ 2d` | 7-day all-models quota + countdown to reset. With `SHOW_FABLE=1`: `📅 🔵 17% / Fable 🟢 24% ↻ 2d` |
+| **Weekly** | `📅 🔵 17% ↻ 2d` | 7-day all-models quota + countdown to reset |
+| **Fable** | `🔮 🟢 24%` | 7-day Fable quota, opt-in with `SHOW_FABLE=1`. Shares the weekly reset, so it shows its own countdown only when the 📅 segment is hidden |
 | **Extra** | `💳 🟢 20% $4.10/$20` | Pay-as-you-go extra usage — opt-in with `SHOW_EXTRA=1`, and only shown when enabled on your account |
 | **Cost** | `$0.42 ⏱ 1h4m` | Claude Code's client-side session cost estimate at list price (not your bill, not extra usage) + session duration |
 
@@ -100,7 +101,7 @@ Export in your shell profile or edit the top of `statusline.sh`:
 | `SHOW_WEEKLY` | `1` | Set to `0` to hide weekly quota |
 | `SHOW_EXTRA` | `0` | Set to `1` to show extra usage (pay-as-you-go). Costs an API call every `REFRESH_INTERVAL` |
 | `TIMEZONE` | *(system default)* | Override display timezone (e.g. `America/New_York`) |
-| `SHOW_FABLE` | `0` | Set to `1` to show the Fable weekly quota next to the weekly one. Only the usage API has it (not Claude Code's stdin), so it costs an API call every `REFRESH_INTERVAL` |
+| `SHOW_FABLE` | `0` | Set to `1` to show the Fable weekly quota (🔮) after the weekly one. Only the usage API has it (not Claude Code's stdin), so it costs an API call every `REFRESH_INTERVAL` |
 | `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache file base path (auto-suffixed with `-acct-<hash>` of your account + organization ID) |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth credentials path |
 | `ACCOUNT_FILE` | `~/.claude.json` | Claude Code state file whose `oauthAccount` account/organization IDs key the cache |

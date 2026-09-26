@@ -597,15 +597,17 @@ render_fable() {  # <stdin json> <extra env...> → rendered status line
 }
 STDIN_BOTH_RESETS="{\"model\":\"claude-sonnet-4-6\",\"rate_limits\":{\"five_hour\":{\"used_percentage\":10},\"seven_day\":{\"used_percentage\":20,\"resets_at\":$(epoch_in +100)}}}"
 OUT=$(render_fable "$STDIN_BOTH_RESETS" SHOW_WEEKLY=1 SHOW_FABLE=1)
-assert_contains "Fable appended, weekly countdown kept" "📅 🟢 20% / Fable 🟢 24% ↻ 4d" "$OUT"
+assert_contains "Fable segment right after weekly" "📅 🟢 20% ↻ 4d │ 🔮 🟢 24%" "$OUT"
+assert_not_contains "no duplicate countdown on Fable" "🔮 🟢 24% ↻" "$OUT"
 assert_eq "cache stores week_fable" "24" "$(jq -r '.metrics.week_fable.percent_used' "$GATE_DIR/usage.json")"
 OUT=$(render_fable "$STDIN_5H" SHOW_WEEKLY=0 SHOW_FABLE=1)
-assert_contains "Fable alone uses its own reset" "📅 Fable 🟢 24% ↻ 2d" "$OUT"
+assert_contains "Fable alone uses its own reset" "🔮 🟢 24% ↻ 2d" "$OUT"
+assert_not_contains "no 📅 when weekly hidden" "📅" "$OUT"
 OUT=$(render_fable "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_FABLE=0)
-assert_not_contains "SHOW_FABLE=0 hides Fable" "Fable" "$OUT"
+assert_not_contains "SHOW_FABLE=0 hides Fable" "🔮" "$OUT"
 echo '{"five_hour":{"utilization":10.0,"resets_at":null}}' > "$GATE_DIR/resp-fable.json"
 OUT=$(render_fable "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_FABLE=1)
-assert_not_contains "no limits[] → no Fable" "Fable" "$OUT"
+assert_not_contains "no limits[] → no Fable" "🔮" "$OUT"
 assert_contains "no limits[] → weekly still shown" "📅 🟢 20%" "$OUT"
 assert_eq "no limits[] → week_fable null" "null" "$(jq -r '.metrics.week_fable' "$GATE_DIR/usage.json")"
 # A malformed limits[] entry must not break the cache write (even with SHOW_FABLE=0)
@@ -622,11 +624,11 @@ FUT_ISO=$(date -u -d "+30 hours" '+%Y-%m-%dT%H:%M:%S+00:00' 2>/dev/null || date 
 echo "{\"source\":\"api\",\"metrics\":{\"week_fable\":{\"percent_used\":90,\"resets_at\":\"$FUT_ISO\"}}}" > "$USAGE_FBL"
 touch_ago 60 "$USAGE_FBL"
 OUT=$(run_statusline "$STDIN_BOTH" USAGE_FILE="$USAGE_FBL" REFRESH_INTERVAL=300 SHOW_FABLE=1)
-assert_contains "stale Fable cache → ⚠" "Fable ⚠ 90%" "$OUT"
+assert_contains "stale Fable cache → ⚠" "🔮 ⚠ 90%" "$OUT"
 assert_not_contains "stdin session not marked stale" "⏳ ⚠" "$OUT"
 echo "{\"source\":\"api\",\"metrics\":{\"week_fable\":{\"percent_used\":90,\"resets_at\":\"$PAST_ISO\"}}}" > "$USAGE_FBL"
 OUT=$(run_statusline "$STDIN_BOTH" USAGE_FILE="$USAGE_FBL" REFRESH_INTERVAL=999999 SHOW_FABLE=1)
-assert_contains "past Fable reset → 0%" "Fable 🔵 0%" "$OUT"
+assert_contains "past Fable reset → 0%" "🔮 🔵 0%" "$OUT"
 rm -rf "$GATE_DIR"
 
 # Test 36 — US byte / newline in the workspace path must not shift later fields
