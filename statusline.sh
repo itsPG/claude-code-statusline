@@ -14,7 +14,7 @@ TIMEZONE="${TIMEZONE:-}"                            # e.g. "America/New_York", e
 REFRESH_INTERVAL="${REFRESH_INTERVAL:-120}"           # seconds between API calls (0 = every render, risks rate limiting)
 SHOW_WEEKLY="${SHOW_WEEKLY:-1}"                      # set to 0 to hide weekly + sonnet quotas
 SHOW_EXTRA="${SHOW_EXTRA:-0}"                        # set to 1 to show extra usage (pay-as-you-go; needs the API)
-SHOW_FABLE="${SHOW_FABLE:-1}"                        # set to 0 to hide the Fable weekly quota (needs the API)
+SHOW_FABLE="${SHOW_FABLE:-0}"                        # set to 1 to show the Fable weekly quota (needs the API)
 USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
 SETTINGS_FILE="${SETTINGS_FILE:-$HOME/.claude/settings.json}"
 ACCOUNT_FILE="${ACCOUNT_FILE:-$HOME/.claude.json}"   # Claude Code state file holding oauthAccount
