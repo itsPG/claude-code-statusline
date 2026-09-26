@@ -38,11 +38,12 @@ Single-purpose files:
 ```
 Claude Code → JSON stdin → statusline.sh → formatted status string
                               ↓ (if NEED_API and cache > REFRESH_INTERVAL old)
-                         curl → api.anthropic.com/api/oauth/usage → ~/.claude/usage-exact-<hash>.json
+                         curl → api.anthropic.com/api/oauth/usage → ~/.claude/usage-exact-acct-<hash>.json
 ```
 
 - **Native stdin first**: `rate_limits.five_hour` / `.seven_day` (Claude Code ≥ 2.1.80, Pro/Max only, present only after the first API response; each window may be absent; `resets_at` is Unix epoch seconds) are preferred over the cache, per window.
-- **`NEED_API`**: the API is skipped only when stdin has `five_hour`, has `seven_day` (or `SHOW_WEEKLY≠1`), and `SHOW_EXTRA≠1` — extra usage is API-only.
+- **`NEED_API`**: the API is skipped only when stdin has `five_hour`, has `seven_day` (or `SHOW_WEEKLY≠1`), `SHOW_EXTRA≠1`, and `SHOW_FABLE≠1` — extra usage and the Fable weekly quota are API-only.
+- **Per-account cache**: `<hash>` = first 8 hex of sha256(`accountUuid:organizationUuid`) from `~/.claude.json` → `.oauthAccount`, not the access token (tokens rotate; the old token-keyed `usage-exact-<8 hex>.json` files are orphans that `install.sh` deletes). No token or no `accountUuid` → the unsuffixed base path. Assumes Claude Code updates `oauthAccount` on `/login` account switches (not verified).
 - **Stale ⚠**: only when the session value came from the cache.
 
 ### Key Design Decisions
@@ -63,9 +64,15 @@ The script uses `https://api.anthropic.com/api/oauth/usage`, an undocumented Ant
   "five_hour": { "utilization": 18.0, "resets_at": "2026-03-27T10:00:00+00:00" },
   "seven_day": { "utilization": 17.0, "resets_at": "2026-04-02T13:00:00+00:00" },
   "seven_day_sonnet": { "utilization": 10.0, "resets_at": "2026-04-02T13:00:00+00:00" },
-  "extra_usage": { "is_enabled": true, "monthly_limit": 2000, "used_credits": 410.0, "utilization": 20.5 }
+  "extra_usage": { "is_enabled": true, "monthly_limit": 2000, "used_credits": 410.0, "utilization": 20.5 },
+  "limits": [
+    { "kind": "weekly_scoped", "group": "weekly", "percent": 24, "resets_at": "2026-10-01T07:59:59.611481+00:00",
+      "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null } }
+  ]
 }
 ```
+
+Observed 2026-09-26: per-model weekly quotas are **not** in `seven_day_*` (`seven_day_opus` / `seven_day_sonnet` were `null`) and not on stdin `rate_limits`; the Fable quota exists only as the `limits[]` entry above (`model.id` is `null`, so match on `display_name`). `limits[]` also repeats `session` / `weekly_all`.
 
 Tracked upstream: [anthropics/claude-code#13585](https://github.com/anthropics/claude-code/issues/13585)
 
@@ -77,7 +84,9 @@ Tracked upstream: [anthropics/claude-code#13585](https://github.com/anthropics/c
 | `REFRESH_INTERVAL` | `120` | Seconds between API calls — do not set to 0 (rate limiting) |
 | `SHOW_WEEKLY` | `1` | Set to `0` to hide weekly quota |
 | `SHOW_EXTRA` | `0` | Set to `1` to show extra usage (pay-as-you-go). Off by default so session/weekly come purely from stdin with no API calls |
-| `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache location |
+| `SHOW_FABLE` | `0` | Set to `1` to show the Fable weekly quota (API-only) |
+| `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache base path (suffixed `-acct-<hash>`) |
+| `ACCOUNT_FILE` | `~/.claude.json` | Source of `oauthAccount.accountUuid` / `organizationUuid` for the cache key |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth token source |
 | `SETTINGS_FILE` | `~/.claude/settings.json` | `effortLevel` fallback when stdin has no `effort.level` |
 

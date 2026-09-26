@@ -141,7 +141,7 @@ echo "=== Integration tests ==="
 TEST_RUNTIME_DIR=$(mktemp -d /tmp/test-runtime-XXXX)
 run_statusline() {
     local json="$1"; shift
-    echo "$json" | env SETTINGS_FILE=/dev/null XDG_RUNTIME_DIR="$TEST_RUNTIME_DIR" "$@" \
+    echo "$json" | env SETTINGS_FILE=/dev/null ACCOUNT_FILE=/dev/null XDG_RUNTIME_DIR="$TEST_RUNTIME_DIR" "$@" \
         CREDENTIALS_FILE=/dev/null bash "$STATUSLINE_SH" 2>/dev/null
 }
 
@@ -359,30 +359,33 @@ assert_not_contains "200k 75% no purple" "🟣" "$OUT"
 # Test 22 — Per-account cache isolation
 echo ""
 echo "-- Test 22: per-account cache --"
-CRED_A=$(mktemp /tmp/test-cred-a-XXXX.json); TMPFILES+=("$CRED_A")
-CRED_B=$(mktemp /tmp/test-cred-b-XXXX.json); TMPFILES+=("$CRED_B")
-echo '{"claudeAiOauth":{"accessToken":"token-aaa"}}' > "$CRED_A"
-echo '{"claudeAiOauth":{"accessToken":"token-bbb"}}' > "$CRED_B"
-
-CACHE_DIR=$(mktemp -d /tmp/test-cache-XXXX); TMPFILES+=("$CACHE_DIR")
-HASH_A=$(echo -n "token-aaa" | sha256sum | cut -c1-8)
-HASH_B=$(echo -n "token-bbb" | sha256sum | cut -c1-8)
-CACHE_A="$CACHE_DIR/usage-${HASH_A}.json"
-CACHE_B="$CACHE_DIR/usage-${HASH_B}.json"
-
-# Seed cache for account A with 40%, account B with 80%
-echo '{"timestamp":"2026-02-21T10:00:00Z","source":"api","metrics":{"session":{"percent_used":40.0,"percent_remaining":60.0,"resets_at":null}}}' > "$CACHE_A"
-echo '{"timestamp":"2026-02-21T10:00:00Z","source":"api","metrics":{"session":{"percent_used":80.0,"percent_remaining":20.0,"resets_at":null}}}' > "$CACHE_B"
-
-OUT_A=$(echo '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' | \
-    env USAGE_FILE="$CACHE_DIR/usage.json" CREDENTIALS_FILE="$CRED_A" REFRESH_INTERVAL=999999 bash "$STATUSLINE_SH" 2>/dev/null)
-assert_contains "account A sees 40%" "40%" "$OUT_A"
-assert_not_contains "account A no 80%" "80%" "$OUT_A"
-
-OUT_B=$(echo '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' | \
-    env USAGE_FILE="$CACHE_DIR/usage.json" CREDENTIALS_FILE="$CRED_B" REFRESH_INTERVAL=999999 bash "$STATUSLINE_SH" 2>/dev/null)
-assert_contains "account B sees 80%" "80%" "$OUT_B"
-assert_not_contains "account B no 40%" "40%" "$OUT_B"
+sha8() { if command -v sha256sum >/dev/null; then echo -n "$1" | sha256sum | cut -c1-8; else echo -n "$1" | shasum -a 256 | cut -c1-8; fi; }
+CACHE_DIR=$(mktemp -d /tmp/test-cache-XXXX)
+for n in a b z; do
+    echo "{\"claudeAiOauth\":{\"accessToken\":\"token-$n\"}}" > "$CACHE_DIR/cred-$n.json"
+done
+echo '{"oauthAccount":{"accountUuid":"uuid-a","organizationUuid":"org-1"}}' > "$CACHE_DIR/acct-a.json"
+echo '{"oauthAccount":{"accountUuid":"uuid-b","organizationUuid":"org-1"}}' > "$CACHE_DIR/acct-b.json"
+seed_session() {  # <file> <percent>
+    echo "{\"source\":\"api\",\"metrics\":{\"session\":{\"percent_used\":$2,\"resets_at\":null}}}" > "$1"
+}
+seed_session "$CACHE_DIR/usage-acct-$(sha8 uuid-a:org-1).json" 40
+seed_session "$CACHE_DIR/usage-acct-$(sha8 uuid-b:org-1).json" 80
+seed_session "$CACHE_DIR/usage.json" 55
+run_account() {  # <cred> <account file>
+    echo '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' | \
+        env USAGE_FILE="$CACHE_DIR/usage.json" CREDENTIALS_FILE="$1" ACCOUNT_FILE="$2" \
+        SETTINGS_FILE=/dev/null XDG_RUNTIME_DIR="$CACHE_DIR" REFRESH_INTERVAL=999999 \
+        bash "$STATUSLINE_SH" 2>/dev/null
+}
+OUT=$(run_account "$CACHE_DIR/cred-a.json" "$CACHE_DIR/acct-a.json")
+assert_contains "account A sees 40%" "⏳ 🟢 40%" "$OUT"
+OUT=$(run_account "$CACHE_DIR/cred-b.json" "$CACHE_DIR/acct-b.json")
+assert_contains "account B sees 80%" "⏳ 🟠 80%" "$OUT"
+OUT=$(run_account "$CACHE_DIR/cred-z.json" "$CACHE_DIR/acct-a.json")
+assert_contains "rotated token, same account → same cache" "⏳ 🟢 40%" "$OUT"
+OUT=$(run_account "$CACHE_DIR/cred-a.json" /dev/null)
+assert_contains "no account id → base cache file" "⏳ 🟡 55%" "$OUT"
 
 rm -rf "$CACHE_DIR"
 
@@ -532,7 +535,7 @@ GATE_DIR=$(mktemp -d /tmp/test-gate-XXXX)
 cat > "$GATE_DIR/curl" <<'FAKE'
 #!/bin/bash
 touch "$GATE_MARKER"
-echo '{"five_hour":{"utilization":50.0,"resets_at":null}}'
+if [ -n "$FAKE_RESPONSE" ]; then cat "$FAKE_RESPONSE"; else echo '{"five_hour":{"utilization":50.0,"resets_at":null}}'; fi
 FAKE
 printf '#!/bin/bash\necho "2.1.0 (Claude Code)"\n' > "$GATE_DIR/claude"
 chmod +x "$GATE_DIR/curl" "$GATE_DIR/claude"
@@ -541,6 +544,7 @@ run_gated() {  # <stdin json> <extra env...> → 1 if the fake curl ran, else 0
     local json="$1"; shift
     rm -f "$GATE_DIR"/usage*.json "$GATE_DIR/called"
     echo "$json" | env PATH="$GATE_DIR:$PATH" GATE_MARKER="$GATE_DIR/called" XDG_RUNTIME_DIR="$GATE_DIR" \
+        SETTINGS_FILE=/dev/null ACCOUNT_FILE=/dev/null \
         CREDENTIALS_FILE="$GATE_DIR/creds.json" USAGE_FILE="$GATE_DIR/usage.json" REFRESH_INTERVAL=0 \
         "$@" bash "$STATUSLINE_SH" >/dev/null 2>&1
     [ -e "$GATE_DIR/called" ] && echo 1 || echo 0
@@ -553,6 +557,45 @@ assert_eq "SHOW_EXTRA=1 still needs API"            "1" "$(run_gated "$STDIN_BOT
 assert_eq "stdin lacks seven_day → API"             "1" "$(run_gated "$STDIN_5H" SHOW_WEEKLY=1 SHOW_EXTRA=0)"
 assert_eq "no weekly wanted, five_hour only → no API" "0" "$(run_gated "$STDIN_5H" SHOW_WEEKLY=0 SHOW_EXTRA=0)"
 assert_eq "no stdin rate_limits → API"              "1" "$(run_gated '{"model":"claude-sonnet-4-6"}' SHOW_WEEKLY=0 SHOW_EXTRA=0)"
+assert_eq "SHOW_FABLE=1 needs API"                  "1" "$(run_gated "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_EXTRA=0 SHOW_FABLE=1)"
+
+# Test 39 — Fable weekly quota: API limits[] → cache → display
+echo ""
+echo "-- Test 39: Fable weekly quota --"
+# Trimmed from a real /api/oauth/usage response (2026-09-26): the Fable quota only
+# appears in limits[] as kind "weekly_scoped" with scope.model.display_name "Fable".
+FABLE_RESET=$(date -u -d "+50 hours" '+%Y-%m-%dT%H:%M:%S.000000+00:00' 2>/dev/null \
+    || date -u -v+50H '+%Y-%m-%dT%H:%M:%S.000000+00:00')
+cat > "$GATE_DIR/resp-fable.json" <<JSON
+{"five_hour":{"utilization":85.0,"resets_at":null},
+ "seven_day":{"utilization":31.0,"resets_at":null},
+ "seven_day_opus":null,"seven_day_sonnet":null,
+ "limits":[
+  {"kind":"session","group":"session","percent":85,"resets_at":null,"scope":null},
+  {"kind":"weekly_all","group":"weekly","percent":31,"resets_at":null,"scope":null},
+  {"kind":"weekly_scoped","group":"weekly","percent":24,"resets_at":"$FABLE_RESET",
+   "scope":{"model":{"id":null,"display_name":"Fable"},"surface":null}}]}
+JSON
+render_fable() {  # <stdin json> <extra env...> → rendered status line
+    local json="$1"; shift
+    rm -f "$GATE_DIR"/usage*.json
+    echo "$json" | env PATH="$GATE_DIR:$PATH" GATE_MARKER="$GATE_DIR/called" XDG_RUNTIME_DIR="$GATE_DIR" \
+        SETTINGS_FILE=/dev/null ACCOUNT_FILE=/dev/null FAKE_RESPONSE="$GATE_DIR/resp-fable.json" \
+        CREDENTIALS_FILE="$GATE_DIR/creds.json" USAGE_FILE="$GATE_DIR/usage.json" REFRESH_INTERVAL=0 \
+        "$@" bash "$STATUSLINE_SH" 2>/dev/null
+}
+OUT=$(render_fable "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_FABLE=1)
+assert_contains "Fable appended to weekly" "📅 🟢 20% / Fable 🟢 24%" "$OUT"
+assert_eq "cache stores week_fable" "24" "$(jq -r '.metrics.week_fable.percent_used' "$GATE_DIR/usage.json")"
+OUT=$(render_fable "$STDIN_5H" SHOW_WEEKLY=0 SHOW_FABLE=1)
+assert_contains "Fable alone uses its own reset" "📅 Fable 🟢 24% ↻ 2d" "$OUT"
+OUT=$(render_fable "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_FABLE=0)
+assert_not_contains "SHOW_FABLE=0 hides Fable" "Fable" "$OUT"
+echo '{"five_hour":{"utilization":10.0,"resets_at":null}}' > "$GATE_DIR/resp-fable.json"
+OUT=$(render_fable "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_FABLE=1)
+assert_not_contains "no limits[] → no Fable" "Fable" "$OUT"
+assert_contains "no limits[] → weekly still shown" "📅 🟢 20%" "$OUT"
+assert_eq "no limits[] → week_fable null" "null" "$(jq -r '.metrics.week_fable' "$GATE_DIR/usage.json")"
 rm -rf "$GATE_DIR"
 
 # Test 36 — US byte / newline in the workspace path must not shift later fields

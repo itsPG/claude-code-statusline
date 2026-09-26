@@ -88,6 +88,15 @@ echo ""
 echo "Cleaning up old tmux scraper artifacts..."
 rm -f /tmp/claude-usage-refresh.lock /tmp/.claude-usage-scraper.sh /tmp/.claude-usage-raw.txt
 if tmux kill-session -t claude-usage-bg 2>/dev/null; then echo "  Killed old tmux scraper session"; fi
+# Older versions keyed the cache on the access-token hash (usage-exact-<8 hex>.json), leaving
+# one orphan per token rotation. Current caches are usage-exact-acct-<hash>.json.
+old_caches=0
+for f in "$HOME"/.claude/usage-exact-*.json; do
+    if [[ "$(basename "$f")" =~ ^usage-exact-[0-9a-f]{8}\.json$ ]]; then
+        rm -f "$f"; old_caches=$((old_caches + 1))
+    fi
+done
+[ "$old_caches" -gt 0 ] && echo "  Removed $old_caches old token-keyed usage cache file(s)"
 echo "  Done"
 
 # 4. Update settings.json

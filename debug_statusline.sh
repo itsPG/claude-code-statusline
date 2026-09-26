@@ -9,6 +9,7 @@ CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/.claude/.credentials.json}"
 USAGE_FILE_BASE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
 REFRESH_INTERVAL="${REFRESH_INTERVAL:-120}"
 SETTINGS_FILE="$HOME/.claude/settings.json"
+ACCOUNT_FILE="${ACCOUNT_FILE:-$HOME/.claude.json}"
 HOOK_FILE="$HOME/.claude/hooks/statusline.sh"
 
 # ── ANSI colors ───────────────────────────────────────────────────────────────
@@ -143,21 +144,27 @@ else
     fail "token non-empty" "no token found — API calls will be skipped"
 fi
 
-# 4. Hash
+# 4. Account hash (mirrors statusline.sh: accountUuid:organizationUuid, not the token)
 ACCOUNT_HASH=""
 if [ -n "$ACCOUNT_TOKEN" ]; then
-    if command -v sha256sum &>/dev/null; then
-        ACCOUNT_HASH=$(echo -n "$ACCOUNT_TOKEN" | sha256sum | cut -c1-8)
-    elif command -v shasum &>/dev/null; then
-        ACCOUNT_HASH=$(echo -n "$ACCOUNT_TOKEN" | shasum -a 256 | cut -c1-8)
-    fi
-    if [ -n "$ACCOUNT_HASH" ]; then
-        ok "token hash" "$ACCOUNT_HASH  (cache suffix)"
+    _account_id=$(jq -r '.oauthAccount | select(.accountUuid) |
+        "\(.accountUuid):\(.organizationUuid // "")"' "$ACCOUNT_FILE" 2>/dev/null)
+    if [ -z "$_account_id" ]; then
+        warn "account id" "no oauthAccount.accountUuid in $ACCOUNT_FILE — cache will use base name"
     else
-        fail "token hash" "sha256 failed — cache will use base name"
+        if command -v sha256sum &>/dev/null; then
+            ACCOUNT_HASH=$(echo -n "$_account_id" | sha256sum | cut -c1-8)
+        elif command -v shasum &>/dev/null; then
+            ACCOUNT_HASH=$(echo -n "$_account_id" | shasum -a 256 | cut -c1-8)
+        fi
+        if [ -n "$ACCOUNT_HASH" ]; then
+            ok "account hash" "$ACCOUNT_HASH  (cache suffix: -acct-$ACCOUNT_HASH)"
+        else
+            fail "account hash" "sha256 failed — cache will use base name"
+        fi
     fi
 else
-    skip "token hash" "no token"
+    skip "account hash" "no token"
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -166,7 +173,7 @@ section "CACHE"
 
 # Resolve actual cache path (mirrors statusline.sh logic)
 if [ -n "$ACCOUNT_HASH" ]; then
-    USAGE_FILE="${USAGE_FILE_BASE%.json}-${ACCOUNT_HASH}.json"
+    USAGE_FILE="${USAGE_FILE_BASE%.json}-acct-${ACCOUNT_HASH}.json"
 else
     USAGE_FILE="$USAGE_FILE_BASE"
 fi
@@ -259,7 +266,7 @@ else
         ok "cache dir writable" "$_cache_dir"
     fi
     # Check for stale lock file that could block all refreshes
-    _lock_file="/tmp/statusline-refresh${ACCOUNT_HASH:+-$ACCOUNT_HASH}.lock"
+    _lock_file="${XDG_RUNTIME_DIR:-$HOME/.claude}/statusline-refresh${ACCOUNT_HASH:+-$ACCOUNT_HASH}.lock"
     if [ -f "$_lock_file" ]; then
         _lock_pid=$(cat "$_lock_file" 2>/dev/null)
         if [ -n "$_lock_pid" ] && kill -0 "$_lock_pid" 2>/dev/null; then
@@ -384,7 +391,7 @@ fi
 
 info "REFRESH_INTERVAL: ${REFRESH_INTERVAL}s"
 [ -n "$TIMEZONE" ] && info "TIMEZONE: $TIMEZONE" || info "TIMEZONE: (system default)"
-info "SHOW_WEEKLY: ${SHOW_WEEKLY:-1}  SHOW_EXTRA: ${SHOW_EXTRA:-0}"
+info "SHOW_WEEKLY: ${SHOW_WEEKLY:-1}  SHOW_EXTRA: ${SHOW_EXTRA:-0}  SHOW_FABLE: ${SHOW_FABLE:-0}"
 
 # ════════════════════════════════════════════════════════════════════════════
 section "RENDER"

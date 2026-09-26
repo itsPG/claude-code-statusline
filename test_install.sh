@@ -184,6 +184,24 @@ assert_zero "install exits 0" "$?"
 assert_eq "odd entry kept" '"x"' "$(jq -c '.hooks.SessionStart[0].hooks' "$FAKE_HOME7/.claude/settings.json")"
 assert_eq "statusLine configured" "command" "$(jq -r '.statusLine.type' "$FAKE_HOME7/.claude/settings.json")"
 
+# ── Test 8: old token-keyed caches removed, current ones kept ────────────────
+echo ""
+echo "=== Test 8: old cache cleanup ==="
+FAKE_HOME8=$(mktemp -d); TMPDIRS+=("$FAKE_HOME8")
+mkdir -p "$FAKE_HOME8/.claude"
+for f in usage-exact-0a1b2c3d.json usage-exact-ffffffff.json \
+         usage-exact-acct-0a1b2c3d.json usage-exact.json usage-exact-custom.json; do
+    echo '{}' > "$FAKE_HOME8/.claude/$f"
+done
+OUT8=$(run_install "$FAKE_HOME8")
+assert_zero "install exits 0" "$?"
+assert_contains "reports removal" "Removed 2 old token-keyed" "$OUT8"
+LEFT=$(cd "$FAKE_HOME8/.claude" && ls usage-exact* | tr '\n' ' ')
+assert_eq "only token-keyed files removed" "usage-exact-acct-0a1b2c3d.json usage-exact-custom.json usage-exact.json " "$LEFT"
+FAKE_HOME9=$(mktemp -d); TMPDIRS+=("$FAKE_HOME9")
+run_install "$FAKE_HOME9" > /dev/null
+assert_zero "no cache files → still exits 0" "$?"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

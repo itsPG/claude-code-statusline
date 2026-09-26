@@ -14,9 +14,11 @@ TIMEZONE="${TIMEZONE:-}"                            # e.g. "America/New_York", e
 REFRESH_INTERVAL="${REFRESH_INTERVAL:-120}"           # seconds between API calls (0 = every render, risks rate limiting)
 SHOW_WEEKLY="${SHOW_WEEKLY:-1}"                      # set to 0 to hide weekly + sonnet quotas
 SHOW_EXTRA="${SHOW_EXTRA:-0}"                        # set to 1 to show extra usage (pay-as-you-go; needs the API)
+SHOW_FABLE="${SHOW_FABLE:-0}"                        # set to 1 to show the Fable weekly quota (needs the API)
 USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
 SETTINGS_FILE="${SETTINGS_FILE:-$HOME/.claude/settings.json}"
-# ── Resolve per-account cache (hash token → separate cache per account) ──────
+ACCOUNT_FILE="${ACCOUNT_FILE:-$HOME/.claude.json}"   # Claude Code state file holding oauthAccount
+# ── Resolve per-account cache (hash account id → separate cache per account) ──
 _CREDENTIALS_CUSTOM="${CREDENTIALS_FILE+set}"   # was CREDENTIALS_FILE explicitly set?
 CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/.claude/.credentials.json}"
 ACCOUNT_TOKEN=""
@@ -30,13 +32,21 @@ if [ -z "$ACCOUNT_TOKEN" ] && [ "${_CREDENTIALS_CUSTOM}" != "set" ] && command -
         ACCOUNT_TOKEN=$(echo "$_keychain_json" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
     fi
 fi
-if [ -n "$ACCOUNT_TOKEN" ]; then
-    if command -v sha256sum &>/dev/null; then
-        ACCOUNT_HASH=$(echo -n "$ACCOUNT_TOKEN" | sha256sum | cut -c1-8)
-    elif command -v shasum &>/dev/null; then
-        ACCOUNT_HASH=$(echo -n "$ACCOUNT_TOKEN" | shasum -a 256 | cut -c1-8)
+# Key the cache on the account + organization UUIDs, not the access token: the token
+# rotates, which used to leave one orphaned cache file behind per rotation. Without a
+# token there is no API call, so the base cache path is used as-is.
+ACCOUNT_HASH=""
+if [ -n "$ACCOUNT_TOKEN" ] && [ -f "$ACCOUNT_FILE" ]; then
+    _account_id=$(jq -r '.oauthAccount | select(.accountUuid) |
+        "\(.accountUuid):\(.organizationUuid // "")"' "$ACCOUNT_FILE" 2>/dev/null)
+    if [ -n "$_account_id" ]; then
+        if command -v sha256sum &>/dev/null; then
+            ACCOUNT_HASH=$(echo -n "$_account_id" | sha256sum | cut -c1-8)
+        elif command -v shasum &>/dev/null; then
+            ACCOUNT_HASH=$(echo -n "$_account_id" | shasum -a 256 | cut -c1-8)
+        fi
     fi
-    [ -n "$ACCOUNT_HASH" ] && USAGE_FILE="${USAGE_FILE%.json}-${ACCOUNT_HASH}.json"
+    [ -n "$ACCOUNT_HASH" ] && USAGE_FILE="${USAGE_FILE%.json}-acct-${ACCOUNT_HASH}.json"
 fi
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -53,6 +63,13 @@ format_remaining() {
     elif [ $m -gt 0 ]; then echo "${m}m"
     else echo "<1m"
     fi
+}
+
+# format_days <seconds> → "Nd" (≥ 1 day) or "Nh"; empty when not in the future
+format_days() {
+    local secs="$1"
+    [ "$secs" -le 0 ] 2>/dev/null && return
+    if [ "$secs" -ge 86400 ]; then echo "$(( secs / 86400 ))d"; else echo "$(( secs / 3600 ))h"; fi
 }
 
 # Cross-platform ISO 8601 → epoch (GNU date -d || BSD date -j)
@@ -241,6 +258,11 @@ refresh_usage_api() {
                 percent_remaining: (100 - .seven_day_sonnet.utilization),
                 resets_at: .seven_day_sonnet.resets_at
             } else null end),
+            # Undocumented: per-model weekly quotas only appear in limits[] as
+            # kind "weekly_scoped"; the Fable entry has no model id, only a display name.
+            week_fable: ([.limits[]? | select(.kind? == "weekly_scoped"
+                    and (.scope.model.display_name? // "") == "Fable")] | first
+                | if . then {percent_used: .percent, resets_at: .resets_at} else null end),
             extra: (if (.extra_usage.is_enabled // false) then {
                 percent_used: .extra_usage.utilization,
                 used_credits: .extra_usage.used_credits,
@@ -255,10 +277,11 @@ refresh_usage_api() {
 }
 
 # Native stdin rate_limits cover session + weekly. The API is still needed for extra
-# usage (SHOW_EXTRA) and as a fallback for any window stdin does not provide.
+# usage (SHOW_EXTRA), the Fable weekly quota (SHOW_FABLE) — neither is on stdin — and
+# as a fallback for any window stdin does not provide.
 NEED_API=1
 if [ -n "$J_RL_5H_PCT" ] && { [ "$SHOW_WEEKLY" != "1" ] || [ -n "$J_RL_7D_PCT" ]; } && \
-   [ "$SHOW_EXTRA" != "1" ]; then
+   [ "$SHOW_EXTRA" != "1" ] && [ "$SHOW_FABLE" != "1" ]; then
     NEED_API=0
 fi
 
@@ -290,7 +313,7 @@ BLOCK_DISPLAY="" WEEK_SONNET_DISPLAY="" EXTRA_DISPLAY=""
 NOW=$(date +%s)
 
 SESS_PCT="" SESS_EPOCH="" SESS_FROM_CACHE=0
-WEEK_PCT="" WEEK_EPOCH=""
+WEEK_PCT="" WEEK_EPOCH="" FABLE_PCT="" FABLE_EPOCH=""
 
 # Leave the epoch empty when no reset is sent — num("") is "0", which would read as
 # a past reset and wrongly zero the live percentage.
@@ -303,11 +326,11 @@ if [ "$SHOW_WEEKLY" = "1" ] && [ -n "$J_RL_7D_PCT" ]; then
     [ -n "$J_RL_7D_RESET" ] && WEEK_EPOCH="$(num "$J_RL_7D_RESET")"
 fi
 
-# The cache only fills metrics stdin didn't provide; extra usage is cache-only.
+# The cache only fills metrics stdin didn't provide; extra usage and Fable are cache-only.
 if [ -f "$USAGE_FILE" ]; then
     # Single jq call to read all cache fields
     IFS=$'\x1f' read -r CACHE_SOURCE U_SESS_PCT U_SESS_RESETS U_WEEK_PCT U_WEEK_RESETS U_SONNET_PCT \
-        U_EXTRA_PCT U_EXTRA_USED U_EXTRA_LIMIT \
+        U_EXTRA_PCT U_EXTRA_USED U_EXTRA_LIMIT U_FABLE_PCT U_FABLE_RESETS \
         < <(jq -r '[
             (.source // "legacy"),
             (.metrics.session.percent_used     // ""),
@@ -317,7 +340,9 @@ if [ -f "$USAGE_FILE" ]; then
             (.metrics.week_sonnet.percent_used // ""),
             (.metrics.extra.percent_used       // ""),
             (.metrics.extra.used_credits       // ""),
-            (.metrics.extra.monthly_limit      // "")
+            (.metrics.extra.monthly_limit      // ""),
+            (.metrics.week_fable.percent_used  // ""),
+            (.metrics.week_fable.resets_at     // "")
         ] | map(tostring | gsub("[[:cntrl:]]"; "")) | join("\u001f")' "$USAGE_FILE" 2>/dev/null)
 
     if [ -n "$CACHE_SOURCE" ]; then
@@ -353,6 +378,13 @@ if [ -f "$USAGE_FILE" ]; then
             fi
         fi
 
+        # Fable weekly (opt-in, API-only)
+        if [ "$SHOW_FABLE" = "1" ] && [ -n "$U_FABLE_PCT" ] && [ "$U_FABLE_PCT" != "null" ]; then
+            FABLE_PCT="$U_FABLE_PCT"
+            [ -n "$U_FABLE_RESETS" ] && [ "$U_FABLE_RESETS" != "null" ] && \
+                FABLE_EPOCH=$(iso_to_epoch "$U_FABLE_RESETS")
+        fi
+
         # Extra usage (pay-as-you-go)
         if [ "$SHOW_EXTRA" = "1" ] && [ -n "$U_EXTRA_PCT" ] && [ "$U_EXTRA_PCT" != "null" ]; then
             EXTRA_INT="$(num "$U_EXTRA_PCT")"
@@ -383,21 +415,26 @@ if [ -n "$SESS_PCT" ]; then
     [ -n "$REMAIN_STR" ] && BLOCK_DISPLAY+=" ↻ ${REMAIN_STR}"
 fi
 
+# "📅 🟢 30% / Fable 🟢 24% ↻ 5d" — the countdown is the all-models window's, or
+# Fable's own when the all-models quota isn't shown.
+WEEK_RESET_LABEL=""
 if [ -n "$WEEK_PCT" ]; then
     WEEK_INT="$(num "$WEEK_PCT")"
-    WEEK_RESET_LABEL=""
-    if [ -n "$WEEK_EPOCH" ] && [ "$WEEK_EPOCH" -gt "$NOW" ] 2>/dev/null; then
-        _DIFF=$(( WEEK_EPOCH - NOW ))
-        if [ "$_DIFF" -ge 86400 ]; then
-            WEEK_RESET_LABEL="$(( _DIFF / 86400 ))d"
-        else
-            WEEK_RESET_LABEL="$(( _DIFF / 3600 ))h"
-        fi
-    fi
+    [ -n "$WEEK_EPOCH" ] && WEEK_RESET_LABEL=$(format_days $(( $(num "$WEEK_EPOCH") - NOW )))
     make_bar "$WEEK_INT"
     WEEK_SONNET_DISPLAY="📅 ${BAR_COLOR} ${WEEK_INT}%"
-    [ -n "$WEEK_RESET_LABEL" ] && WEEK_SONNET_DISPLAY+=" ↻ ${WEEK_RESET_LABEL}"
 fi
+if [ -n "$FABLE_PCT" ]; then
+    FABLE_INT="$(num "$FABLE_PCT")"
+    make_bar "$FABLE_INT"
+    if [ -n "$WEEK_SONNET_DISPLAY" ]; then
+        WEEK_SONNET_DISPLAY+=" / Fable ${BAR_COLOR} ${FABLE_INT}%"
+    else
+        WEEK_SONNET_DISPLAY="📅 Fable ${BAR_COLOR} ${FABLE_INT}%"
+        [ -n "$FABLE_EPOCH" ] && WEEK_RESET_LABEL=$(format_days $(( $(num "$FABLE_EPOCH") - NOW )))
+    fi
+fi
+[ -n "$WEEK_SONNET_DISPLAY" ] && [ -n "$WEEK_RESET_LABEL" ] && WEEK_SONNET_DISPLAY+=" ↻ ${WEEK_RESET_LABEL}"
 
 # ── Stale indicator — replace color dot with ⚠ when cache is stale ──────────
 # Only when the session came from the cache: stdin rate_limits are always current.
