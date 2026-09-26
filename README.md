@@ -107,6 +107,7 @@ Export in your shell profile or edit the top of `statusline.sh`:
 
 ```bash
 bash test_statusline.sh
+bash test_install.sh
 ```
 
 ## Troubleshooting
@@ -171,4 +172,4 @@ Forked from [ohugonnot/claude-code-statusline](https://github.com/ohugonnot/clau
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

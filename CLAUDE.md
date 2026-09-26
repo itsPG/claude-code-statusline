@@ -13,6 +13,7 @@ Real-time status line for Claude Code that displays rate limit usage, session co
 ```bash
 # Run tests
 bash test_statusline.sh
+bash test_install.sh   # installer, against a fake $HOME
 
 # Manual test (pipe JSON to statusline)
 echo '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":42}}' | bash statusline.sh
@@ -24,11 +25,13 @@ bash install.sh --refresh 120  # custom interval
 
 ## Architecture
 
-Three files, single-purpose each:
+Single-purpose files:
 
 - **statusline.sh** (core) — Claude Code status line hook. Reads JSON from stdin (model, context_window, cost, effort, rate_limits), outputs a formatted status string. Refreshes usage data via API only when needed and the cache is stale.
 - **install.sh** — Copies `statusline.sh` to `~/.claude/hooks/`, updates `~/.claude/settings.json`, checks/installs dependencies, cleans up old tmux scraper artifacts.
-- **test_statusline.sh** — Unit + integration tests with simple assert helpers (`assert_eq`, `assert_contains`, `assert_not_contains`).
+- **test_statusline.sh** — Unit + integration tests with simple assert helpers (`assert_eq`, `assert_contains`, `assert_not_contains`, `assert_absent`).
+- **test_install.sh** — Runs `install.sh` against a temp `$HOME` (fresh install, merge, invalid JSON, `--refresh` validation).
+- **debug_statusline.sh** — Diagnostic script for a user's local setup.
 
 ### Data Flow
 

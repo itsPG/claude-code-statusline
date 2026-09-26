@@ -8,7 +8,10 @@ set -euo pipefail
 CUSTOM_REFRESH=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --refresh) CUSTOM_REFRESH="$2"; shift 2 ;;
+        --refresh)
+            CUSTOM_REFRESH="${2:?--refresh requires a value (seconds)}"
+            [[ "$CUSTOM_REFRESH" =~ ^[0-9]+$ ]] || { echo "  --refresh must be a number of seconds" >&2; exit 1; }
+            shift 2 ;;
         *) shift ;;
     esac
 done
@@ -84,7 +87,7 @@ echo "  Installed: $HOOKS_DIR/statusline.sh"
 echo ""
 echo "Cleaning up old tmux scraper artifacts..."
 rm -f /tmp/claude-usage-refresh.lock /tmp/.claude-usage-scraper.sh /tmp/.claude-usage-raw.txt
-tmux kill-session -t claude-usage-bg 2>/dev/null && echo "  Killed old tmux scraper session" || true
+if tmux kill-session -t claude-usage-bg 2>/dev/null; then echo "  Killed old tmux scraper session"; fi
 echo "  Done"
 
 # 4. Update settings.json
@@ -94,18 +97,21 @@ echo "Configuring Claude Code..."
 STATUS_LINE_CONFIG='{"type":"command","command":"bash ~/.claude/hooks/statusline.sh"}'
 
 if [ -f "$SETTINGS_FILE" ]; then
+    if ! jq empty "$SETTINGS_FILE" 2>/dev/null; then
+        echo "  settings.json is not valid JSON — fix it manually, statusLine not configured" >&2
+        exit 1
+    fi
     tmp="$(mktemp)"
     jq --argjson sl "$STATUS_LINE_CONFIG" '
       .statusLine = $sl |
       # Remove old SessionStart hook for statusline if present
-      if .hooks.SessionStart then
+      if (.hooks.SessionStart | type) == "array" then
         .hooks.SessionStart = [.hooks.SessionStart[] | select(.hooks[0].command != "bash ~/.claude/hooks/statusline.sh < /dev/null")]
       else . end |
       # Clean up empty SessionStart array
       if .hooks.SessionStart == [] then del(.hooks.SessionStart) else . end |
       if .hooks == {} then del(.hooks) else . end
-    ' "$SETTINGS_FILE" > "$tmp"
-    mv "$tmp" "$SETTINGS_FILE"
+    ' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
     echo "  Updated statusLine in existing settings.json"
 else
     mkdir -p "$(dirname "$SETTINGS_FILE")"
