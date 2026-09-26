@@ -260,9 +260,12 @@ refresh_usage_api() {
             } else null end),
             # Undocumented: per-model weekly quotas only appear in limits[] as
             # kind "weekly_scoped"; the Fable entry has no model id, only a display name.
-            week_fable: ([.limits[]? | select(.kind? == "weekly_scoped"
-                    and (.scope.model.display_name? // "") == "Fable")] | first
-                | if . then {percent_used: .percent, resets_at: .resets_at} else null end),
+            # try: a malformed entry must not fail the whole cache write.
+            week_fable: (try ([.limits[] | objects | select(.kind == "weekly_scoped"
+                    and ((.scope.model.display_name)? // "") == "Fable"
+                    and (.percent | type) == "number")] | first
+                | if . then {percent_used: .percent, resets_at: .resets_at} else null end)
+                catch null),
             extra: (if (.extra_usage.is_enabled // false) then {
                 percent_used: .extra_usage.utilization,
                 used_credits: .extra_usage.used_credits,
@@ -424,9 +427,19 @@ if [ -n "$WEEK_PCT" ]; then
     make_bar "$WEEK_INT"
     WEEK_SONNET_DISPLAY="📅 ${BAR_COLOR} ${WEEK_INT}%"
 fi
+# Cache older than 3 missed refresh windows → ⚠ in place of the color dot of any value
+# read from it (session when stdin lacked it, and Fable, which is cache-only).
+CACHE_STALE=0
+if [ -f "$USAGE_FILE" ] && [ "$REFRESH_INTERVAL" -gt 0 ] 2>/dev/null; then
+    [ "$(cache_age_sec)" -gt $(( REFRESH_INTERVAL * 3 )) ] && CACHE_STALE=1
+fi
+
 if [ -n "$FABLE_PCT" ]; then
     FABLE_INT="$(num "$FABLE_PCT")"
+    # Window rolled over since the cache was written — usage is back to ~0%
+    [ -n "$FABLE_EPOCH" ] && [ "$(num "$FABLE_EPOCH")" -le "$NOW" ] && FABLE_INT=0
     make_bar "$FABLE_INT"
+    [ "$CACHE_STALE" = 1 ] && BAR_COLOR="⚠"
     if [ -n "$WEEK_SONNET_DISPLAY" ]; then
         WEEK_SONNET_DISPLAY+=" / Fable ${BAR_COLOR} ${FABLE_INT}%"
     else
@@ -436,12 +449,10 @@ if [ -n "$FABLE_PCT" ]; then
 fi
 [ -n "$WEEK_SONNET_DISPLAY" ] && [ -n "$WEEK_RESET_LABEL" ] && WEEK_SONNET_DISPLAY+=" ↻ ${WEEK_RESET_LABEL}"
 
-# ── Stale indicator — replace color dot with ⚠ when cache is stale ──────────
+# ── Stale indicator — replace the session color dot with ⚠ ───────────────────
 # Only when the session came from the cache: stdin rate_limits are always current.
 IS_STALE=0
-if [ "$SESS_FROM_CACHE" = 1 ] && [ -f "$USAGE_FILE" ] && [ "$REFRESH_INTERVAL" -gt 0 ] 2>/dev/null; then
-    [ "$(cache_age_sec)" -gt $(( REFRESH_INTERVAL * 3 )) ] && IS_STALE=1
-fi
+[ "$SESS_FROM_CACHE" = 1 ] && [ "$CACHE_STALE" = 1 ] && IS_STALE=1
 [ "$IS_STALE" = 1 ] && [ -n "$BLOCK_DISPLAY" ] && \
     BLOCK_DISPLAY=$(echo "$BLOCK_DISPLAY" | sed -E 's/🔵|🟢|🟡|🟠|🔴/⚠/')
 

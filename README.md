@@ -103,6 +103,7 @@ Export in your shell profile or edit the top of `statusline.sh`:
 | `SHOW_FABLE` | `0` | Set to `1` to show the Fable weekly quota next to the weekly one. Only the usage API has it (not Claude Code's stdin), so it costs an API call every `REFRESH_INTERVAL` |
 | `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache file base path (auto-suffixed with `-acct-<hash>` of your account + organization ID) |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth credentials path |
+| `ACCOUNT_FILE` | `~/.claude.json` | Claude Code state file whose `oauthAccount` account/organization IDs key the cache |
 | `SETTINGS_FILE` | `~/.claude/settings.json` | Read for `effortLevel` when Claude Code doesn't send `effort.level` |
 
 ## Testing
@@ -115,12 +116,12 @@ bash test_install.sh
 ## Troubleshooting
 
 **⚠ in place of the session color dot?**
-The session value came from the API cache and the cache is older than 3× `REFRESH_INTERVAL`. It never appears when the session value comes from Claude Code's stdin.
+The session value came from the API cache and the cache is older than 3× `REFRESH_INTERVAL`. It never appears when the session value comes from Claude Code's stdin. The Fable quota (always from the cache) gets the same ⚠ when the cache is that old.
 
 **Usage display frozen / not updating?**
 You may have been rate-limited by the Anthropic API (e.g. `REFRESH_INTERVAL` was too low or set to `0`). Wait a few minutes, then test the API directly — a `rate_limit_error` response confirms it. Once the rate limit clears, the statusline resumes auto-updating.
 
-> **Multiple Claude Code windows?** All windows logged into the same account share the same cache file (`~/.claude/usage-exact-acct-<hash>.json`). Whichever window renders first past the 60s mark will call the API and refresh the cache for all others. You won't get multiple simultaneous API calls from the same machine.
+> **Multiple Claude Code windows?** All windows logged into the same account share the same cache file (`~/.claude/usage-exact-acct-<hash>.json`). Whichever window renders first once the cache is older than `REFRESH_INTERVAL` will call the API and refresh the cache for all others. You won't get multiple simultaneous API calls from the same machine.
 
 **Usage bars missing?**
 Check that `~/.claude/.credentials.json` exists and contains a valid `claudeAiOauth.accessToken`. This file is created automatically when you log into Claude Code.

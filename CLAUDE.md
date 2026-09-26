@@ -44,7 +44,7 @@ Claude Code → JSON stdin → statusline.sh → formatted status string
 - **Native stdin first**: `rate_limits.five_hour` / `.seven_day` (Claude Code ≥ 2.1.80, Pro/Max only, present only after the first API response; each window may be absent; `resets_at` is Unix epoch seconds) are preferred over the cache, per window.
 - **`NEED_API`**: the API is skipped only when stdin has `five_hour`, has `seven_day` (or `SHOW_WEEKLY≠1`), `SHOW_EXTRA≠1`, and `SHOW_FABLE≠1` — extra usage and the Fable weekly quota are API-only.
 - **Per-account cache**: `<hash>` = first 8 hex of sha256(`accountUuid:organizationUuid`) from `~/.claude.json` → `.oauthAccount`, not the access token (tokens rotate; the old token-keyed `usage-exact-<8 hex>.json` files are orphans that `install.sh` deletes). No token or no `accountUuid` → the unsuffixed base path. Assumes Claude Code updates `oauthAccount` on `/login` account switches (not verified).
-- **Stale ⚠**: only when the session value came from the cache.
+- **Stale ⚠** (cache older than 3× `REFRESH_INTERVAL`): on the session dot only when the session came from the cache; on the Fable dot always (Fable is cache-only). A past `resets_at` zeroes session and Fable.
 
 ### Key Design Decisions
 

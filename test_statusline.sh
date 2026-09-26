@@ -384,6 +384,9 @@ OUT=$(run_account "$CACHE_DIR/cred-b.json" "$CACHE_DIR/acct-b.json")
 assert_contains "account B sees 80%" "⏳ 🟠 80%" "$OUT"
 OUT=$(run_account "$CACHE_DIR/cred-z.json" "$CACHE_DIR/acct-a.json")
 assert_contains "rotated token, same account → same cache" "⏳ 🟢 40%" "$OUT"
+echo '{"oauthAccount":{"accountUuid":"uuid-a","organizationUuid":"org-2"}}' > "$CACHE_DIR/acct-a2.json"
+OUT=$(run_account "$CACHE_DIR/cred-a.json" "$CACHE_DIR/acct-a2.json")
+assert_not_contains "same account, other org → separate cache" "40%" "$OUT"
 OUT=$(run_account "$CACHE_DIR/cred-a.json" /dev/null)
 assert_contains "no account id → base cache file" "⏳ 🟡 55%" "$OUT"
 
@@ -573,9 +576,17 @@ cat > "$GATE_DIR/resp-fable.json" <<JSON
  "limits":[
   {"kind":"session","group":"session","percent":85,"resets_at":null,"scope":null},
   {"kind":"weekly_all","group":"weekly","percent":31,"resets_at":null,"scope":null},
+  {"kind":"weekly_scoped","group":"weekly","percent":null,"resets_at":null,
+   "scope":{"model":{"id":null,"display_name":"Fable"},"surface":null}},
+  {"kind":"weekly_scoped","group":"weekly","percent":77,"resets_at":null,
+   "scope":{"model":{"id":null,"display_name":"Opus"},"surface":null}},
+  {"kind":"session_scoped","group":"session","percent":66,"resets_at":null,
+   "scope":{"model":{"id":null,"display_name":"Fable"},"surface":null}},
   {"kind":"weekly_scoped","group":"weekly","percent":24,"resets_at":"$FABLE_RESET",
    "scope":{"model":{"id":null,"display_name":"Fable"},"surface":null}}]}
 JSON
+# The first three limits[] entries are decoys (null percent, other model, other kind):
+# only the last one may be picked.
 render_fable() {  # <stdin json> <extra env...> → rendered status line
     local json="$1"; shift
     rm -f "$GATE_DIR"/usage*.json
@@ -584,8 +595,9 @@ render_fable() {  # <stdin json> <extra env...> → rendered status line
         CREDENTIALS_FILE="$GATE_DIR/creds.json" USAGE_FILE="$GATE_DIR/usage.json" REFRESH_INTERVAL=0 \
         "$@" bash "$STATUSLINE_SH" 2>/dev/null
 }
-OUT=$(render_fable "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_FABLE=1)
-assert_contains "Fable appended to weekly" "📅 🟢 20% / Fable 🟢 24%" "$OUT"
+STDIN_BOTH_RESETS="{\"model\":\"claude-sonnet-4-6\",\"rate_limits\":{\"five_hour\":{\"used_percentage\":10},\"seven_day\":{\"used_percentage\":20,\"resets_at\":$(epoch_in +100)}}}"
+OUT=$(render_fable "$STDIN_BOTH_RESETS" SHOW_WEEKLY=1 SHOW_FABLE=1)
+assert_contains "Fable appended, weekly countdown kept" "📅 🟢 20% / Fable 🟢 24% ↻ 4d" "$OUT"
 assert_eq "cache stores week_fable" "24" "$(jq -r '.metrics.week_fable.percent_used' "$GATE_DIR/usage.json")"
 OUT=$(render_fable "$STDIN_5H" SHOW_WEEKLY=0 SHOW_FABLE=1)
 assert_contains "Fable alone uses its own reset" "📅 Fable 🟢 24% ↻ 2d" "$OUT"
@@ -596,6 +608,25 @@ OUT=$(render_fable "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_FABLE=1)
 assert_not_contains "no limits[] → no Fable" "Fable" "$OUT"
 assert_contains "no limits[] → weekly still shown" "📅 🟢 20%" "$OUT"
 assert_eq "no limits[] → week_fable null" "null" "$(jq -r '.metrics.week_fable' "$GATE_DIR/usage.json")"
+# A malformed limits[] entry must not break the cache write (even with SHOW_FABLE=0)
+echo '{"five_hour":{"utilization":50.0,"resets_at":null},"limits":[{"kind":"weekly_scoped","scope":"str"}]}' > "$GATE_DIR/resp-fable.json"
+OUT=$(render_fable '{"model":"claude-sonnet-4-6"}' SHOW_FABLE=0)
+assert_contains "malformed scope → session still cached" "⏳ 🟡 50%" "$OUT"
+
+# Test 40 — Cached Fable: stale cache → ⚠, past reset → 0%
+echo ""
+echo "-- Test 40: stale / rolled-over Fable cache --"
+USAGE_FBL=$(mktemp /tmp/test-usage-fbl-XXXX.json); TMPFILES+=("$USAGE_FBL")
+PAST_ISO=$(date -u -d "-24 hours" '+%Y-%m-%dT%H:%M:%S+00:00' 2>/dev/null || date -u -v-24H '+%Y-%m-%dT%H:%M:%S+00:00')
+FUT_ISO=$(date -u -d "+30 hours" '+%Y-%m-%dT%H:%M:%S+00:00' 2>/dev/null || date -u -v+30H '+%Y-%m-%dT%H:%M:%S+00:00')
+echo "{\"source\":\"api\",\"metrics\":{\"week_fable\":{\"percent_used\":90,\"resets_at\":\"$FUT_ISO\"}}}" > "$USAGE_FBL"
+touch_ago 60 "$USAGE_FBL"
+OUT=$(run_statusline "$STDIN_BOTH" USAGE_FILE="$USAGE_FBL" REFRESH_INTERVAL=300 SHOW_FABLE=1)
+assert_contains "stale Fable cache → ⚠" "Fable ⚠ 90%" "$OUT"
+assert_not_contains "stdin session not marked stale" "⏳ ⚠" "$OUT"
+echo "{\"source\":\"api\",\"metrics\":{\"week_fable\":{\"percent_used\":90,\"resets_at\":\"$PAST_ISO\"}}}" > "$USAGE_FBL"
+OUT=$(run_statusline "$STDIN_BOTH" USAGE_FILE="$USAGE_FBL" REFRESH_INTERVAL=999999 SHOW_FABLE=1)
+assert_contains "past Fable reset → 0%" "Fable 🔵 0%" "$OUT"
 rm -rf "$GATE_DIR"
 
 # Test 36 — US byte / newline in the workspace path must not shift later fields
