@@ -14,7 +14,7 @@ This script reads your session and weekly rate limits from the status line input
 
 ## What you get
 
-Color-coded indicators: 🔵 under 20% │ 🟢 20-50% │ 🟡 50-70% │ 🟠 70-85% │ 🔴 over 85%
+Color-coded indicators: 🔵 under 20% │ 🟢 20-50% │ 🟡 50-70% │ 🟠 70-85% │ 🔴 85% and above
 
 For **1M/2M context windows**, thresholds are stricter: 🔵 <12% │ 🟢 <29% │ 🟡 <41% │ 🟠 <50% │ 🔴 50-69% │ 🟣 >=70%
 
@@ -38,17 +38,17 @@ Claude Code → JSON stdin → statusline.sh → formatted status string
 
 Session (5h) and weekly (7d) usage come from the `rate_limits` field Claude Code passes on stdin whenever it is present — always current, no network call. That field exists only on claude.ai Pro/Max plans, only after the first API response of a session, and each window may be absent independently.
 
-The usage API is called (at most every 2 minutes, configurable) only when something shown isn't covered by stdin: a missing `rate_limits` window, or extra usage (opt-in `SHOW_EXTRA=1`, API-only). With the default `SHOW_EXTRA=0` and both windows on stdin, no API call is made at all, and the usage segments update on every status line render instead of every 2 minutes. The call takes ~200ms and runs inline — no background processes, no tmux, no scraping.
+The usage API is called (at most every 2 minutes, configurable) only when something shown isn't covered by stdin: a missing `rate_limits` window, the Fable weekly quota (opt-in `SHOW_FABLE=1`, API-only), or extra usage (opt-in `SHOW_EXTRA=1`, API-only). With the defaults and both windows on stdin, no API call is made at all, and the usage segments update on every status line render instead of every 2 minutes. The call takes ~200ms and runs inline — no background processes, no tmux, no scraping.
 
-The OAuth token is read from `~/.claude/.credentials.json`, which Claude Code maintains automatically during active sessions. If the token is expired or the API is unreachable, the script silently falls back to cached data or displays without usage info.
+The OAuth token is read from `~/.claude/.credentials.json`, or on macOS from the Keychain entry `Claude Code-credentials` when that file doesn't exist — both are maintained by Claude Code. If the token is expired or the API is unreachable, the script silently falls back to cached data or displays without usage info.
 
 ### About the Usage API
 
-The script uses `https://api.anthropic.com/api/oauth/usage`, an **undocumented** Anthropic endpoint discovered by the community. It returns session (5h) and weekly (7d) quota utilization as percentages with ISO 8601 reset timestamps.
+The script uses `https://api.anthropic.com/api/oauth/usage`, an **undocumented** Anthropic endpoint discovered by the community. It returns session (5h) and weekly (7d) quota utilization as percentages with ISO 8601 reset timestamps, plus a `limits[]` list that includes per-model weekly quotas such as Fable (the only place the Fable quota appears — it isn't on Claude Code's stdin).
 
 This is not an official API — it could change without notice. There's an open feature request for official programmatic access: [anthropics/claude-code#13585](https://github.com/anthropics/claude-code/issues/13585).
 
-If Anthropic removes this endpoint, the script degrades gracefully: you still get git, model, and context info — just no usage bars.
+If Anthropic removes this endpoint, the script degrades gracefully: model, context, cost, and the stdin-provided session/weekly usage keep working — only Fable and extra usage disappear.
 
 ## Install
 
@@ -58,10 +58,10 @@ If Anthropic removes this endpoint, the script degrades gracefully: you still ge
 curl -fsSL https://raw.githubusercontent.com/itsPG/claude-code-statusline/main/install.sh | bash
 ```
 
-With custom refresh interval (e.g. every 2 minutes):
+With a custom API refresh interval (e.g. every 5 minutes; default 120s):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/itsPG/claude-code-statusline/main/install.sh | bash -s -- --refresh 120
+curl -fsSL https://raw.githubusercontent.com/itsPG/claude-code-statusline/main/install.sh | bash -s -- --refresh 300
 ```
 
 ### Manual
@@ -93,15 +93,21 @@ chmod +x ~/.claude/hooks/statusline.sh
 
 ## Configuration
 
-Export in your shell profile or edit the top of `statusline.sh`:
+Set variables in the `statusLine` command in `~/.claude/settings.json`, e.g.
+
+```json
+{"statusLine": {"type": "command", "command": "SHOW_FABLE=1 bash ~/.claude/hooks/statusline.sh"}}
+```
+
+or export them in the environment Claude Code is started from, or edit the defaults at the top of `~/.claude/hooks/statusline.sh`. Note that re-running `install.sh` resets both the `statusLine` command and the installed script.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REFRESH_INTERVAL` | `120` | Seconds between API calls — **do not set to 0** (causes rate limiting) |
 | `SHOW_WEEKLY` | `1` | Set to `0` to hide weekly quota |
+| `SHOW_FABLE` | `0` | Set to `1` to show the Fable weekly quota (🔮) after the weekly one. Only the usage API has it (not Claude Code's stdin), so it costs an API call every `REFRESH_INTERVAL` |
 | `SHOW_EXTRA` | `0` | Set to `1` to show extra usage (pay-as-you-go). Costs an API call every `REFRESH_INTERVAL` |
 | `TIMEZONE` | *(system default)* | Override display timezone (e.g. `America/New_York`) |
-| `SHOW_FABLE` | `0` | Set to `1` to show the Fable weekly quota (🔮) after the weekly one. Only the usage API has it (not Claude Code's stdin), so it costs an API call every `REFRESH_INTERVAL` |
 | `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache file base path (auto-suffixed with `-acct-<hash>` of your account + organization ID) |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth credentials path |
 | `ACCOUNT_FILE` | `~/.claude.json` | Claude Code state file whose `oauthAccount` account/organization IDs key the cache |
@@ -124,8 +130,8 @@ You may have been rate-limited by the Anthropic API (e.g. `REFRESH_INTERVAL` was
 
 > **Multiple Claude Code windows?** All windows logged into the same account share the same cache file (`~/.claude/usage-exact-acct-<hash>.json`). Whichever window renders first once the cache is older than `REFRESH_INTERVAL` will call the API and refresh the cache for all others. You won't get multiple simultaneous API calls from the same machine.
 
-**Usage bars missing?**
-Check that `~/.claude/.credentials.json` exists and contains a valid `claudeAiOauth.accessToken`. This file is created automatically when you log into Claude Code.
+**Usage segments missing?**
+Session/weekly come from Claude Code's stdin on Pro/Max plans, but only after the first API response of a session. Before that (and for Fable / extra usage), the script needs an OAuth token: check that `~/.claude/.credentials.json` — or on macOS the Keychain entry `Claude Code-credentials` — contains `claudeAiOauth.accessToken`. Claude Code creates it when you log in. `bash debug_statusline.sh` checks all of this.
 
 **Force a refresh:**
 ```bash
@@ -143,8 +149,11 @@ Older versions keyed the cache on the OAuth access token, which rotates. Re-run 
 **Test the API directly:**
 ```bash
 TOKEN=$(jq -r '.claudeAiOauth.accessToken' ~/.claude/.credentials.json)
+# macOS without that file:
+# TOKEN=$(security find-generic-password -s "Claude Code-credentials" -w | jq -r '.claudeAiOauth.accessToken')
 curl -s "https://api.anthropic.com/api/oauth/usage" \
   -H "Authorization: Bearer $TOKEN" \
+  -H "User-Agent: claude-code/$(claude --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" \
   -H "anthropic-beta: oauth-2025-04-20" | jq .
 ```
 
@@ -174,9 +183,10 @@ Forked from [ohugonnot/claude-code-statusline](https://github.com/ohugonnot/clau
 - Weekly quota shown by default (`SHOW_WEEKLY=1`)
 - Shorter default refresh interval (120s instead of 300s)
 - Per-account usage cache (supports switching between Anthropic accounts), keyed on account + organization ID
-- Optional Fable weekly quota (`SHOW_FABLE=1`)
-- Installer prompts before downloading from GitHub when local file is not found
+- Optional Fable weekly quota segment (🔮, `SHOW_FABLE=1`)
 - Extra usage (pay-as-you-go) segment, opt-in via `SHOW_EXTRA=1`
+- Reads OAuth credentials from the macOS Keychain when `~/.claude/.credentials.json` is absent
+- Effort label from Claude Code's stdin `effort.level` (incl. `xhigh`), falling back to `settings.json`
 
 ## License
 
