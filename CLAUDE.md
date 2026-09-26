@@ -76,7 +76,7 @@ Tracked upstream: [anthropics/claude-code#13585](https://github.com/anthropics/c
 | `TIMEZONE` | system | Override for display (e.g. `America/New_York`) |
 | `REFRESH_INTERVAL` | `120` | Seconds between API calls — do not set to 0 (rate limiting) |
 | `SHOW_WEEKLY` | `1` | Set to `0` to hide weekly quota |
-| `SHOW_EXTRA` | `1` | Set to `0` to hide extra usage (pay-as-you-go) |
+| `SHOW_EXTRA` | `0` | Set to `1` to show extra usage (pay-as-you-go). Off by default so session/weekly come purely from stdin with no API calls |
 | `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache location |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth token source |
 | `SETTINGS_FILE` | `~/.claude/settings.json` | `effortLevel` fallback when stdin has no `effort.level` |

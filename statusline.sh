@@ -13,7 +13,7 @@
 TIMEZONE="${TIMEZONE:-}"                            # e.g. "America/New_York", empty = system default
 REFRESH_INTERVAL="${REFRESH_INTERVAL:-120}"           # seconds between API calls (0 = every render, risks rate limiting)
 SHOW_WEEKLY="${SHOW_WEEKLY:-1}"                      # set to 0 to hide weekly + sonnet quotas
-SHOW_EXTRA="${SHOW_EXTRA:-1}"                        # set to 0 to hide extra usage (pay-as-you-go)
+SHOW_EXTRA="${SHOW_EXTRA:-0}"                        # set to 1 to show extra usage (pay-as-you-go; needs the API)
 USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
 SETTINGS_FILE="${SETTINGS_FILE:-$HOME/.claude/settings.json}"
 # ── Resolve per-account cache (hash token → separate cache per account) ──────

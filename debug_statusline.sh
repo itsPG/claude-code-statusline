@@ -384,7 +384,7 @@ fi
 
 info "REFRESH_INTERVAL: ${REFRESH_INTERVAL}s"
 [ -n "$TIMEZONE" ] && info "TIMEZONE: $TIMEZONE" || info "TIMEZONE: (system default)"
-info "SHOW_WEEKLY: ${SHOW_WEEKLY:-1}  SHOW_EXTRA: ${SHOW_EXTRA:-1}"
+info "SHOW_WEEKLY: ${SHOW_WEEKLY:-1}  SHOW_EXTRA: ${SHOW_EXTRA:-0}"
 
 # ════════════════════════════════════════════════════════════════════════════
 section "RENDER"
@@ -407,7 +407,7 @@ if [ -f "$HOOK_FILE" ]; then
         if [ -n "$C_WEEK" ] && [ "${SHOW_WEEKLY:-1}" = "1" ] && ! printf '%s' "$_render_out" | grep -q "📅"; then
             fail "render: weekly usage" "cache has weekly data (${C_WEEK%.*}%) but 📅 missing from output"
         fi
-        if [ -n "$C_EXTRA_PCT" ] && [ "${SHOW_EXTRA:-1}" = "1" ] && ! printf '%s' "$_render_out" | grep -q "💳"; then
+        if [ -n "$C_EXTRA_PCT" ] && [ "${SHOW_EXTRA:-0}" = "1" ] && ! printf '%s' "$_render_out" | grep -q "💳"; then
             fail "render: extra usage" "cache has extra data (${C_EXTRA_PCT%.*}%) but 💳 missing from output"
         fi
     elif [ "$_render_rc" -eq 0 ] && [ -z "$_render_out" ]; then
