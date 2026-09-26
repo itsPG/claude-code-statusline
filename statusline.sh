@@ -95,6 +95,7 @@ cache_age_sec() {
 # non-digit. Critical: percentages flow into $(( )), where a value like
 # "x[$(cmd)]" would execute cmd via arithmetic array-subscript evaluation.
 num() {
+    [ "${1:0:1}" = "-" ] && { echo 0; return; }   # clamp negatives to 0
     local v="${1%%.*}"
     v="${v//[^0-9]/}"
     echo "$(( 10#${v:-0} ))"   # 10# forces base 10 — a leading zero would be read as octal
@@ -124,7 +125,9 @@ JSON=$(cat)
 # ── Parse all stdin fields in a single jq call ───────────────────────────────
 # Joined on US (0x1f), not "|": a "|" in the workspace path or model name would
 # shift every later field. US is non-whitespace so read preserves empty fields
-# (e.g. absent rate_limits). rate_limits.* is native since Claude Code 2.1.80 (Pro/Max
+# (e.g. absent rate_limits). Every field is stringified and stripped of control
+# characters (C0 incl. US/newline, DEL, C1) so free text can't shift later fields
+# or inject terminal escapes; "?" keeps a malformed rate_limits from failing the call. rate_limits.* is native since Claude Code 2.1.80 (Pro/Max
 # only, after the first API response); resets_at there is Unix epoch seconds.
 IFS=$'\x1f' read -r J_MODEL_DISPLAY J_MODEL_RAW J_CTX_PCT J_CTX_SIZE J_COST J_DURATION J_CWD J_EFFORT \
     J_RL_5H_PCT J_RL_5H_RESET J_RL_7D_PCT J_RL_7D_RESET \
@@ -137,11 +140,11 @@ IFS=$'\x1f' read -r J_MODEL_DISPLAY J_MODEL_RAW J_CTX_PCT J_CTX_SIZE J_COST J_DU
         (.cost.total_duration_ms // ""),
         (.workspace.current_dir // ""),
         (.effort.level // ""),
-        (.rate_limits.five_hour.used_percentage // ""),
-        (.rate_limits.five_hour.resets_at // ""),
-        (.rate_limits.seven_day.used_percentage // ""),
-        (.rate_limits.seven_day.resets_at // "")
-    ] | join("\u001f")' 2>/dev/null)
+        ((.rate_limits.five_hour.used_percentage)? // ""),
+        ((.rate_limits.five_hour.resets_at)? // ""),
+        ((.rate_limits.seven_day.used_percentage)? // ""),
+        ((.rate_limits.seven_day.resets_at)? // "")
+    ] | map(tostring | gsub("[[:cntrl:]]"; "")) | join("\u001f")' 2>/dev/null)
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 MODEL="$J_MODEL_DISPLAY"
@@ -155,8 +158,6 @@ case "$MODEL" in
   claude-opus-4-5*|Opus\ 4.5*)     MODEL="Opus 4.5" ;;
   claude-haiku-4*|Haiku\ 4*)       MODEL="Haiku 4"  ;;
 esac
-# Strip control bytes — the model name comes from JSON (terminal OSC injection)
-MODEL="${MODEL//[$'\x01'-$'\x1f'$'\x7f']/}"
 
 # ── Effort level ─────────────────────────────────────────────────────────────
 # Modern Claude Code (≥ ~2.1) sends effort.level in stdin JSON. Older versions
@@ -317,7 +318,7 @@ if [ -f "$USAGE_FILE" ]; then
             (.metrics.extra.percent_used       // ""),
             (.metrics.extra.used_credits       // ""),
             (.metrics.extra.monthly_limit      // "")
-        ] | join("\u001f")' "$USAGE_FILE" 2>/dev/null)
+        ] | map(tostring | gsub("[[:cntrl:]]"; "")) | join("\u001f")' "$USAGE_FILE" 2>/dev/null)
 
     if [ -n "$CACHE_SOURCE" ]; then
         # Session block

@@ -8,6 +8,7 @@ PASS=0; FAIL=0
 TMPFILES=()
 cleanup_tests() {
     for f in "${TMPFILES[@]}"; do rm -f "$f"; done
+    [ -n "$TEST_RUNTIME_DIR" ] && rm -rf "$TEST_RUNTIME_DIR"
 }
 trap cleanup_tests EXIT INT TERM
 
@@ -135,9 +136,13 @@ assert_absent "num did not execute payload" "/tmp/statusline-num-canary"
 echo ""
 echo "=== Integration tests ==="
 
+# Isolate from the real ~/.claude: no settings.json effort, lock file in a temp dir.
+# Per-test env args come after the defaults, so they can still override them.
+TEST_RUNTIME_DIR=$(mktemp -d /tmp/test-runtime-XXXX)
 run_statusline() {
     local json="$1"; shift
-    echo "$json" | env "$@" CREDENTIALS_FILE=/dev/null bash "$STATUSLINE_SH" 2>/dev/null
+    echo "$json" | env SETTINGS_FILE=/dev/null XDG_RUNTIME_DIR="$TEST_RUNTIME_DIR" "$@" \
+        CREDENTIALS_FILE=/dev/null bash "$STATUSLINE_SH" 2>/dev/null
 }
 
 # Test 1 — model + context window
@@ -429,9 +434,13 @@ echo "-- Test 27: OSC injection stripped --"
 # Write the JSON to a file so the shell never handles the raw ESC byte.
 OSC_TMP=$(mktemp /tmp/test-osc-XXXX.json); TMPFILES+=("$OSC_TMP")
 printf '%s' '{"model":{"display_name":"\u001b]0;PWNED\u0007"},"context_window":{"used_percentage":42}}' > "$OSC_TMP"
-OUT=$(CREDENTIALS_FILE=/dev/null USAGE_FILE=/dev/null bash "$STATUSLINE_SH" < "$OSC_TMP" 2>/dev/null)
+OUT=$(CREDENTIALS_FILE=/dev/null USAGE_FILE=/dev/null SETTINGS_FILE=/dev/null bash "$STATUSLINE_SH" < "$OSC_TMP" 2>/dev/null)
 assert_not_contains "no ESC byte in output" "$(printf '\x1b')" "$OUT"
 assert_contains "context pct still rendered" "42%" "$OUT"
+# C1 CSI (U+009B) and CR must be stripped too, independent of bash version / locale
+printf '%s' '{"model":{"display_name":"X\u009b2J\rY"},"context_window":{"used_percentage":42}}' > "$OSC_TMP"
+OUT=$(CREDENTIALS_FILE=/dev/null USAGE_FILE=/dev/null SETTINGS_FILE=/dev/null bash "$STATUSLINE_SH" < "$OSC_TMP" 2>/dev/null)
+assert_contains "C1 CSI and CR stripped" "X2JY │" "$OUT"
 
 # Test 28 — Non-numeric cost is ignored
 echo ""
@@ -544,6 +553,33 @@ assert_eq "stdin lacks seven_day → API"             "1" "$(run_gated "$STDIN_5
 assert_eq "no weekly wanted, five_hour only → no API" "0" "$(run_gated "$STDIN_5H" SHOW_WEEKLY=0 SHOW_EXTRA=0)"
 assert_eq "no stdin rate_limits → API"              "1" "$(run_gated '{"model":"claude-sonnet-4-6"}' SHOW_WEEKLY=0 SHOW_EXTRA=0)"
 rm -rf "$GATE_DIR"
+
+# Test 36 — US byte / newline in the workspace path must not shift later fields
+echo ""
+echo "-- Test 36: control chars in workspace path --"
+OUT=$(run_statusline '{"model":{"display_name":"Opus 4.7"},"context_window":{"used_percentage":42},"workspace":{"current_dir":"/tmp/a\u001fb"},"effort":{"level":"high"}}' \
+    USAGE_FILE=/dev/null)
+assert_eq "US in cwd: effort kept, no phantom session" "Opus 4.7/hi │ 🟢 Ctx 42%" "$OUT"
+OUT=$(run_statusline '{"model":{"display_name":"Opus 4.7"},"context_window":{"used_percentage":42},"workspace":{"current_dir":"/tmp/a\nb"},"effort":{"level":"high"},"rate_limits":{"five_hour":{"used_percentage":30}}}' \
+    USAGE_FILE=/dev/null)
+assert_eq "newline in cwd: effort + session kept" "Opus 4.7/hi │ 🟢 Ctx 42% │ ⏳ 🟢 30%" "$OUT"
+
+# Test 37 — Malformed rate_limits must not wipe the other fields
+echo ""
+echo "-- Test 37: malformed rate_limits --"
+OUT=$(run_statusline '{"model":{"display_name":"Opus 4.7"},"context_window":{"used_percentage":42},"effort":{"level":"high"},"rate_limits":"n/a"}' \
+    USAGE_FILE=/dev/null)
+assert_eq "string rate_limits ignored" "Opus 4.7/hi │ 🟢 Ctx 42%" "$OUT"
+OUT=$(run_statusline '{"model":{"display_name":"Opus 4.7"},"context_window":{"used_percentage":42},"effort":{"level":"high"},"rate_limits":{"five_hour":{"used_percentage":30,"resets_at":{"x":1}}}}' \
+    USAGE_FILE=/dev/null)
+assert_contains "object resets_at keeps other fields" "Opus 4.7/hi │ 🟢 Ctx 42%" "$OUT"
+
+# Test 38 — Negative percentage clamps to 0
+echo ""
+echo "-- Test 38: negative percentage --"
+assert_eq "num negative → 0" "0" "$(num -20)"
+OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":-20}}' USAGE_FILE=/dev/null)
+assert_contains "ctx -20 → 0%" "🔵 Ctx 0%" "$OUT"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""

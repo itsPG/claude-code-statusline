@@ -48,7 +48,7 @@ Claude Code → JSON stdin → statusline.sh → formatted status string
 ### Key Design Decisions
 
 - **Inline API call**: Usage data is fetched via a single `curl` call (~200ms) — no background processes, no tmux, no python. Fast enough to run inline on every status line render when cache is stale.
-- **Untrusted input**: stdin/cache values reach bash arithmetic only through `num()` (blocks `x[$(cmd)]` array-subscript injection); fields are joined on US (0x1f), not `|`.
+- **Untrusted input**: stdin/cache values reach bash arithmetic only through `num()` (blocks `x[$(cmd)]` array-subscript injection). jq stringifies every field, strips `[[:cntrl:]]` (C0 incl. US/newline, DEL, C1), and joins on US (0x1f) — so free text can't shift later fields or inject terminal escapes.
 - **Atomic cache writes**: Uses `tmp + mv` to prevent partial reads of the cache file.
 - **Backward compatible**: Reads both the old tmux-scraped cache format (`resets` text) and the new API format (`resets_at` ISO 8601).
 - **Cross-platform**: GNU stat (Linux) vs BSD stat (macOS) detection in `file_mtime()`. Avoids `grep -P` (not available on macOS).
@@ -79,11 +79,12 @@ Tracked upstream: [anthropics/claude-code#13585](https://github.com/anthropics/c
 | `SHOW_EXTRA` | `1` | Set to `0` to hide extra usage (pay-as-you-go) |
 | `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache location |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth token source |
+| `SETTINGS_FILE` | `~/.claude/settings.json` | `effortLevel` fallback when stdin has no `effort.level` |
 
 ## Testing Patterns
 
 Tests extract `num()` and `make_bar()` via awk and eval them for unit testing (sourcing the whole helper section would hit the macOS Keychain lookup). Integration tests pipe JSON through `statusline.sh` with overridden env vars (`USAGE_FILE`, `REFRESH_INTERVAL`, `CREDENTIALS_FILE=/dev/null`) to control behavior without triggering the real API. Temp files are tracked in `TMPFILES` array and cleaned via trap.
 
-To add a test: create a temp JSON cache file, use `run_statusline` helper with appropriate env overrides, assert on stdout.
+To add a test: create a temp JSON cache file, use `run_statusline` helper with appropriate env overrides, assert on stdout. `run_statusline` defaults `SETTINGS_FILE=/dev/null` and a temp `XDG_RUNTIME_DIR` so tests never read or write the real `~/.claude`. The suites call `bash` from `PATH`; to test macOS bash 3.2, prepend a dir with a `bash → /bin/bash` symlink.
 
 API-call gating is tested with a fake `curl` / `claude` prepended to `PATH` that touches a marker file (see `run_gated`).

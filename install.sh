@@ -97,21 +97,29 @@ echo "Configuring Claude Code..."
 STATUS_LINE_CONFIG='{"type":"command","command":"bash ~/.claude/hooks/statusline.sh"}'
 
 if [ -f "$SETTINGS_FILE" ]; then
-    if ! jq empty "$SETTINGS_FILE" 2>/dev/null; then
-        echo "  settings.json is not valid JSON — fix it manually, statusLine not configured" >&2
+    # Exactly one JSON object — `jq empty` alone accepts an empty file, arrays, and
+    # multiple concatenated documents.
+    if ! jq -se 'length == 1 and (.[0] | type) == "object"' "$SETTINGS_FILE" >/dev/null 2>&1; then
+        echo "  settings.json is not a single JSON object — fix it manually, statusLine not configured" >&2
         exit 1
     fi
     tmp="$(mktemp)"
-    jq --argjson sl "$STATUS_LINE_CONFIG" '
+    if jq --argjson sl "$STATUS_LINE_CONFIG" '
       .statusLine = $sl |
       # Remove old SessionStart hook for statusline if present
       if (.hooks.SessionStart | type) == "array" then
-        .hooks.SessionStart = [.hooks.SessionStart[] | select(.hooks[0].command != "bash ~/.claude/hooks/statusline.sh < /dev/null")]
+        .hooks.SessionStart = [.hooks.SessionStart[] | select(((.hooks[0].command)? // null) != "bash ~/.claude/hooks/statusline.sh < /dev/null")]
       else . end |
       # Clean up empty SessionStart array
       if .hooks.SessionStart == [] then del(.hooks.SessionStart) else . end |
       if .hooks == {} then del(.hooks) else . end
-    ' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+    ' "$SETTINGS_FILE" > "$tmp"; then
+        mv "$tmp" "$SETTINGS_FILE"
+    else
+        rm -f "$tmp"
+        echo "  Failed to update settings.json — statusLine not configured" >&2
+        exit 1
+    fi
     echo "  Updated statusLine in existing settings.json"
 else
     mkdir -p "$(dirname "$SETTINGS_FILE")"

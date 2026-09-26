@@ -160,6 +160,30 @@ assert_eq "SessionStart object preserved" "true" "$ODD"
 SL_TYPE5=$(jq -r '.statusLine.type // ""' "$FAKE_HOME5/.claude/settings.json" 2>/dev/null)
 assert_eq "statusLine configured" "command" "$SL_TYPE5"
 
+# ── Test 6: valid JSON of the wrong shape — reject loudly, file intact ─────
+echo ""
+echo "=== Test 6: wrong-shape settings.json ==="
+for bad in '[]' '{"hooks":"x"}' '' '{"a":1}{"b":2}'; do
+    FAKE_HOME6=$(mktemp -d); TMPDIRS+=("$FAKE_HOME6")
+    mkdir -p "$FAKE_HOME6/.claude"
+    printf '%s' "$bad" > "$FAKE_HOME6/.claude/settings.json"
+    ERR_OUT=$(run_install "$FAKE_HOME6")
+    assert_nonzero "rejects '$bad'" "$?"
+    assert_contains "error for '$bad' mentions settings.json" "settings.json" "$ERR_OUT"
+    assert_eq "'$bad' left unchanged" "$bad" "$(cat "$FAKE_HOME6/.claude/settings.json")"
+done
+
+# ── Test 7: SessionStart entry with a non-array "hooks" is kept, install succeeds ─
+echo ""
+echo "=== Test 7: odd SessionStart entry ==="
+FAKE_HOME7=$(mktemp -d); TMPDIRS+=("$FAKE_HOME7")
+mkdir -p "$FAKE_HOME7/.claude"
+printf '{"hooks":{"SessionStart":[{"hooks":"x"}]}}' > "$FAKE_HOME7/.claude/settings.json"
+run_install "$FAKE_HOME7" > /dev/null
+assert_zero "install exits 0" "$?"
+assert_eq "odd entry kept" '"x"' "$(jq -c '.hooks.SessionStart[0].hooks' "$FAKE_HOME7/.claude/settings.json")"
+assert_eq "statusLine configured" "command" "$(jq -r '.statusLine.type' "$FAKE_HOME7/.claude/settings.json")"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

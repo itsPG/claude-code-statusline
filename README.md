@@ -102,6 +102,7 @@ Export in your shell profile or edit the top of `statusline.sh`:
 | `TIMEZONE` | *(system default)* | Override display timezone (e.g. `America/New_York`) |
 | `USAGE_FILE` | `~/.claude/usage-exact.json` | Cache file base path (auto-suffixed with account hash) |
 | `CREDENTIALS_FILE` | `~/.claude/.credentials.json` | OAuth credentials path |
+| `SETTINGS_FILE` | `~/.claude/settings.json` | Read for `effortLevel` when Claude Code doesn't send `effort.level` |
 
 ## Testing
 
