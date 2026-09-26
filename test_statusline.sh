@@ -35,6 +35,15 @@ assert_contains() {
     fi
 }
 
+assert_absent() {  # fail if <path> exists — for injection canaries
+    local desc="$1" path="$2"
+    if [ -e "$path" ]; then
+        echo "  ✗ $desc (canary $path was created)"; ((FAIL++))
+    else
+        echo "  ✓ $desc"; ((PASS++))
+    fi
+}
+
 assert_not_contains() {
     local desc="$1" needle="$2" haystack="$3"
     if ! echo "$haystack" | grep -qF "$needle"; then
@@ -51,7 +60,8 @@ assert_not_contains() {
 echo ""
 echo "=== Unit tests: make_bar ==="
 
-# Extract make_bar function from statusline.sh and source it
+# Extract make_bar (and the num helper it depends on) from statusline.sh and source them
+eval "$(awk '/^num\(\)/,/^\}/' "$STATUSLINE_SH")"
 eval "$(awk '/^make_bar\(\)/,/^\}/' "$STATUSLINE_SH")"
 
 run_make_bar() {
@@ -106,6 +116,20 @@ echo ""
 echo "-- Edge cases --"
 run_make_bar 1
 assert_contains "pct=1: has filled block" "▓" "$BAR_STR"
+
+# ── Unit tests: num (arithmetic injection guard) ─────────────────────────────
+echo ""
+echo "=== Unit tests: num ==="
+assert_eq "num strips decimal"        "46" "$(num 46.0)"
+assert_eq "num plain integer"         "42" "$(num 42)"
+assert_eq "num leading zero (octal)"  "8"  "$(num 08)"
+assert_eq "num empty → 0"             "0"  "$(num '')"
+assert_eq "num non-numeric → 0"       "0"  "$(num 'abc')"
+# Digit-free canary path, so the expected output is exactly 0 (num keeps digits)
+rm -f /tmp/statusline-num-canary
+# shellcheck disable=SC2016  # the payload must stay a literal string
+assert_eq "num neutralizes injection" "0"  "$(num 'x[$(touch /tmp/statusline-num-canary)]')"
+assert_absent "num did not execute payload" "/tmp/statusline-num-canary"
 
 # ── Integration tests ─────────────────────────────────────────────────────────
 echo ""
@@ -375,6 +399,61 @@ echo "-- Test 24: SHOW_EXTRA=0 hides extra --"
 OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' \
     USAGE_FILE="$USAGE_EXTRA" REFRESH_INTERVAL=999999 SHOW_EXTRA=0)
 assert_not_contains "extra hidden" "💳" "$OUT"
+
+# Test 25 — Injection regression: malicious cache value must not execute
+echo ""
+echo "-- Test 25: arithmetic injection neutralized --"
+CANARY="/tmp/statusline-pwned-$$"; rm -f "$CANARY"
+USAGE_EVIL=$(mktemp /tmp/test-usage-evil-XXXX.json); TMPFILES+=("$USAGE_EVIL")
+printf '{"source":"api","metrics":{"session":{"percent_used":"x[$(touch %s)]","resets_at":null},"week_all":{"percent_used":"x[$(touch %s)]","resets_at":null}}}' "$CANARY" "$CANARY" > "$USAGE_EVIL"
+OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":42},"cost":{"total_duration_ms":"x[$(touch '"$CANARY"')]"}}' \
+    USAGE_FILE="$USAGE_EVIL" REFRESH_INTERVAL=999999)
+assert_absent "payload did not execute" "$CANARY"
+assert_contains "ctx still rendered" "42%" "$OUT"
+rm -f "$CANARY"
+
+# Test 26 — "|" in workspace path must not shift later fields (effort.level)
+echo ""
+echo "-- Test 26: pipe in workspace path keeps effort --"
+OUT=$(run_statusline '{"model":{"display_name":"Opus 4.7"},"context_window":{"used_percentage":42},"workspace":{"current_dir":"/tmp/a|b"},"effort":{"level":"high"}}' \
+    USAGE_FILE=/dev/null)
+assert_contains "effort kept" "Opus 4.7/hi" "$OUT"
+OUT=$(run_statusline '{"model":{"display_name":"Foo|Bar"},"context_window":{"used_percentage":42},"cost":{"total_cost_usd":1.5}}' \
+    USAGE_FILE=/dev/null)
+assert_contains "ctx still 42%" "42%" "$OUT"
+assert_contains "cost still parsed" '$1.50' "$OUT"
+
+# Test 27 — OSC injection: control bytes stripped from model name
+echo ""
+echo "-- Test 27: OSC injection stripped --"
+# Write the JSON to a file so the shell never handles the raw ESC byte.
+OSC_TMP=$(mktemp /tmp/test-osc-XXXX.json); TMPFILES+=("$OSC_TMP")
+printf '%s' '{"model":{"display_name":"\u001b]0;PWNED\u0007"},"context_window":{"used_percentage":42}}' > "$OSC_TMP"
+OUT=$(CREDENTIALS_FILE=/dev/null USAGE_FILE=/dev/null bash "$STATUSLINE_SH" < "$OSC_TMP" 2>/dev/null)
+assert_not_contains "no ESC byte in output" "$(printf '\x1b')" "$OUT"
+assert_contains "context pct still rendered" "42%" "$OUT"
+
+# Test 28 — Non-numeric cost is ignored
+echo ""
+echo "-- Test 28: non-numeric cost ignored --"
+OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0},"cost":{"total_cost_usd":"abc"}}' \
+    USAGE_FILE=/dev/null)
+assert_not_contains "no cost segment" '$' "$OUT"
+
+# Test 29 — effortLevel fallback from SETTINGS_FILE when stdin has no effort
+echo ""
+echo "-- Test 29: effort fallback from settings.json --"
+SETTINGS_TMP=$(mktemp /tmp/test-settings-XXXX.json); TMPFILES+=("$SETTINGS_TMP")
+echo '{"effortLevel":"max"}' > "$SETTINGS_TMP"
+OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' \
+    USAGE_FILE=/dev/null SETTINGS_FILE="$SETTINGS_TMP")
+assert_contains "settings max → /mx" "Snt 4.6/mx" "$OUT"
+OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0},"effort":{"level":"low"}}' \
+    USAGE_FILE=/dev/null SETTINGS_FILE="$SETTINGS_TMP")
+assert_contains "stdin effort wins over settings" "Snt 4.6/lo" "$OUT"
+OUT=$(run_statusline '{"model":"claude-sonnet-4-6","context_window":{"used_percentage":0}}' \
+    USAGE_FILE=/dev/null SETTINGS_FILE=/dev/null)
+assert_not_contains "no effort suffix when absent" "Snt 4.6/" "$OUT"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""

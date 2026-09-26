@@ -15,6 +15,7 @@ REFRESH_INTERVAL="${REFRESH_INTERVAL:-120}"           # seconds between API call
 SHOW_WEEKLY="${SHOW_WEEKLY:-1}"                      # set to 0 to hide weekly + sonnet quotas
 SHOW_EXTRA="${SHOW_EXTRA:-1}"                        # set to 0 to hide extra usage (pay-as-you-go)
 USAGE_FILE="${USAGE_FILE:-$HOME/.claude/usage-exact.json}"
+SETTINGS_FILE="${SETTINGS_FILE:-$HOME/.claude/settings.json}"
 # ── Resolve per-account cache (hash token → separate cache per account) ──────
 _CREDENTIALS_CUSTOM="${CREDENTIALS_FILE+set}"   # was CREDENTIALS_FILE explicitly set?
 CREDENTIALS_FILE="${CREDENTIALS_FILE:-$HOME/.claude/.credentials.json}"
@@ -90,11 +91,19 @@ cache_age_sec() {
     echo "$age"
 }
 
+# Coerce to a bare non-negative integer. Drops the decimal part then strips any
+# non-digit. Critical: percentages flow into $(( )), where a value like
+# "x[$(cmd)]" would execute cmd via arithmetic array-subscript evaluation.
+num() {
+    local v="${1%%.*}"
+    v="${v//[^0-9]/}"
+    echo "$(( 10#${v:-0} ))"   # 10# forces base 10 — a leading zero would be read as octal
+}
+
 # make_bar <percent> → sets BAR_COLOR and BAR_STR (6-block bar)
 make_bar() {
-    local pct="$1"
-    [ "$pct" -lt 0 ] 2>/dev/null && pct=0
-    [ "$pct" -gt 100 ] 2>/dev/null && pct=100
+    local pct; pct="$(num "$1")"
+    [ "$pct" -gt 100 ] && pct=100
     local filled=$(( (pct + 16) / 17 )); [ $filled -gt 6 ] && filled=6
     local empty=$(( 6 - filled ))
     BAR_STR=""
@@ -113,7 +122,9 @@ make_bar() {
 JSON=$(cat)
 
 # ── Parse all stdin fields in a single jq call ───────────────────────────────
-IFS='|' read -r J_MODEL_DISPLAY J_MODEL_RAW J_CTX_PCT J_CTX_SIZE J_COST J_DURATION J_CWD J_EFFORT \
+# Joined on US (0x1f), not "|": a "|" in the workspace path or model name would
+# shift every later field. US is non-whitespace so read preserves empty fields.
+IFS=$'\x1f' read -r J_MODEL_DISPLAY J_MODEL_RAW J_CTX_PCT J_CTX_SIZE J_COST J_DURATION J_CWD J_EFFORT \
     < <(echo "$JSON" | jq -r '[
         (if .model | type == "object" then .model.display_name // "" else "" end),
         (if .model | type == "string" then .model else "" end),
@@ -123,7 +134,7 @@ IFS='|' read -r J_MODEL_DISPLAY J_MODEL_RAW J_CTX_PCT J_CTX_SIZE J_COST J_DURATI
         (.cost.total_duration_ms // ""),
         (.workspace.current_dir // ""),
         (.effort.level // "")
-    ] | join("|")' 2>/dev/null)
+    ] | join("\u001f")' 2>/dev/null)
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 MODEL="$J_MODEL_DISPLAY"
@@ -137,6 +148,8 @@ case "$MODEL" in
   claude-opus-4-5*|Opus\ 4.5*)     MODEL="Opus 4.5" ;;
   claude-haiku-4*|Haiku\ 4*)       MODEL="Haiku 4"  ;;
 esac
+# Strip control bytes — the model name comes from JSON (terminal OSC injection)
+MODEL="${MODEL//[$'\x01'-$'\x1f'$'\x7f']/}"
 
 # ── Effort level ─────────────────────────────────────────────────────────────
 # Modern Claude Code (≥ ~2.1) sends effort.level in stdin JSON. Older versions
@@ -144,7 +157,6 @@ esac
 EFFORT_LABEL=""
 EFFORT_RAW="$J_EFFORT"
 if [ -z "$EFFORT_RAW" ]; then
-    SETTINGS_FILE="$HOME/.claude/settings.json"
     [ -f "$SETTINGS_FILE" ] && \
         EFFORT_RAW=$(jq -r '.effortLevel // empty' "$SETTINGS_FILE" 2>/dev/null)
 fi
@@ -157,7 +169,7 @@ case "$EFFORT_RAW" in
 esac
 
 # ── Context window ────────────────────────────────────────────────────────────
-CTX_PERCENT="${J_CTX_PCT:-0}"
+CTX_PERCENT="$(num "${J_CTX_PCT:-0}")"
 CTX_LABEL="Ctx"
 if   [ "$J_CTX_SIZE" -ge 1900000 ] 2>/dev/null; then CTX_LABEL="2M"
 elif [ "$J_CTX_SIZE" -ge 900000 ]  2>/dev/null; then CTX_LABEL="1M"
@@ -179,11 +191,11 @@ fi
 
 # ── Session cost + duration ───────────────────────────────────────────────────
 COST_STR="" DURATION_STR=""
-if [ -n "$J_COST" ] && [ "$J_COST" != "0" ] && [ "$J_COST" != "null" ]; then
+if [[ "$J_COST" =~ ^[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$ ]] && [ "$J_COST" != "0" ]; then
     COST_STR=$(printf '$%.2f' "$J_COST" 2>/dev/null)
 fi
 if [ -n "$J_DURATION" ] && [ "$J_DURATION" != "0" ] && [ "$J_DURATION" != "null" ]; then
-    DURATION_STR=$(format_remaining $(( J_DURATION / 1000 )))
+    DURATION_STR=$(format_remaining $(( $(num "$J_DURATION") / 1000 )))
 fi
 
 
@@ -200,7 +212,9 @@ refresh_usage_api() {
         -H "anthropic-beta: oauth-2025-04-20" \
         -H "Content-Type: application/json" 2>/dev/null)
     echo "$resp" | jq -e '.five_hour.utilization' >/dev/null 2>&1 || return 1
-    echo "$resp" | jq '{
+    local tmp
+    tmp=$(mktemp "${USAGE_FILE}.XXXXXX") || return 1
+    if echo "$resp" | jq '{
         timestamp: (now | todate),
         source: "api",
         metrics: {
@@ -225,13 +239,21 @@ refresh_usage_api() {
                 monthly_limit: .extra_usage.monthly_limit
             } else null end)
         }
-    }' > "${USAGE_FILE}.tmp" && mv "${USAGE_FILE}.tmp" "$USAGE_FILE"
+    }' > "$tmp"; then
+        mv "$tmp" "$USAGE_FILE"
+    else
+        rm -f "$tmp"; return 1
+    fi
 }
 
-LOCK_FILE="/tmp/statusline-refresh${ACCOUNT_HASH:+-$ACCOUNT_HASH}.lock"
+[[ "$REFRESH_INTERVAL" =~ ^[0-9]+$ ]] || REFRESH_INTERVAL=120
+
+# Lock outside world-writable /tmp to avoid a symlink/clobber on shared hosts.
+LOCK_FILE="${XDG_RUNTIME_DIR:-$HOME/.claude}/statusline-refresh${ACCOUNT_HASH:+-$ACCOUNT_HASH}.lock"
 if [ "$(cache_age_sec)" -gt "$REFRESH_INTERVAL" ]; then
     if command -v flock &>/dev/null; then
-        ( flock -n 9 || exit 0; refresh_usage_api ) 9>"$LOCK_FILE"
+        # 2>/dev/null: if the lock dir is missing, skip the refresh quietly
+        ( flock -n 9 || exit 0; refresh_usage_api ) 9>"$LOCK_FILE" 2>/dev/null
     else
         # macOS: flock not available — remove stale lock then try to acquire
         if [ -f "$LOCK_FILE" ]; then
@@ -253,7 +275,7 @@ NOW=$(date +%s)
 
 if [ -f "$USAGE_FILE" ]; then
     # Single jq call to read all cache fields
-    IFS='|' read -r CACHE_SOURCE U_SESS_PCT U_SESS_RESETS U_WEEK_PCT U_WEEK_RESETS U_SONNET_PCT \
+    IFS=$'\x1f' read -r CACHE_SOURCE U_SESS_PCT U_SESS_RESETS U_WEEK_PCT U_WEEK_RESETS U_SONNET_PCT \
         U_EXTRA_PCT U_EXTRA_USED U_EXTRA_LIMIT \
         < <(jq -r '[
             (.source // "legacy"),
@@ -265,12 +287,12 @@ if [ -f "$USAGE_FILE" ]; then
             (.metrics.extra.percent_used       // ""),
             (.metrics.extra.used_credits       // ""),
             (.metrics.extra.monthly_limit      // "")
-        ] | join("|")' "$USAGE_FILE" 2>/dev/null)
+        ] | join("\u001f")' "$USAGE_FILE" 2>/dev/null)
 
     if [ -n "$CACHE_SOURCE" ]; then
         # Session block
         if [ -n "$U_SESS_PCT" ] && [ "$U_SESS_PCT" != "null" ]; then
-            SESS_INT="${U_SESS_PCT%.*}"
+            SESS_INT="$(num "$U_SESS_PCT")"
             REMAIN_STR=""
             RESET_EPOCH=""
             if [ -n "$U_SESS_RESETS" ] && [ "$U_SESS_RESETS" != "null" ]; then
@@ -302,7 +324,7 @@ if [ -f "$USAGE_FILE" ]; then
         # Weekly + Sonnet (opt-in)
         WEEK_INT="" WEEK_COLOR="" WEEK_RESET_LABEL=""
         if [ "$SHOW_WEEKLY" = "1" ] && [ -n "$U_WEEK_PCT" ] && [ "$U_WEEK_PCT" != "null" ]; then
-            WEEK_INT="${U_WEEK_PCT%.*}"
+            WEEK_INT="$(num "$U_WEEK_PCT")"
             if [ -n "$U_WEEK_RESETS" ] && [ "$U_WEEK_RESETS" != "null" ]; then
                 if [ "$CACHE_SOURCE" = "api" ]; then
                     WEEK_EPOCH=$(iso_to_epoch "$U_WEEK_RESETS")
@@ -334,11 +356,10 @@ if [ -f "$USAGE_FILE" ]; then
         # Extra usage (pay-as-you-go)
         EXTRA_DISPLAY=""
         if [ "$SHOW_EXTRA" = "1" ] && [ -n "$U_EXTRA_PCT" ] && [ "$U_EXTRA_PCT" != "null" ]; then
-            EXTRA_INT="${U_EXTRA_PCT%.*}"
+            EXTRA_INT="$(num "$U_EXTRA_PCT")"
             make_bar "$EXTRA_INT"
             EXTRA_DISPLAY="💳 ${BAR_COLOR} ${EXTRA_INT}%"
-            if [ -n "$U_EXTRA_USED" ] && [ -n "$U_EXTRA_LIMIT" ] && \
-               [ "$U_EXTRA_USED" != "null" ] && [ "$U_EXTRA_LIMIT" != "null" ]; then
+            if [[ "$U_EXTRA_USED" =~ ^[0-9]+(\.[0-9]+)?$ ]] && [[ "$U_EXTRA_LIMIT" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
                 EXTRA_USED_DOLLARS=$(printf '$%.2f' "$(echo "$U_EXTRA_USED / 100" | bc -l 2>/dev/null)" 2>/dev/null)
                 EXTRA_LIMIT_DOLLARS=$(printf '$%.0f' "$(echo "$U_EXTRA_LIMIT / 100" | bc -l 2>/dev/null)" 2>/dev/null)
                 [ -n "$EXTRA_USED_DOLLARS" ] && [ -n "$EXTRA_LIMIT_DOLLARS" ] && \
