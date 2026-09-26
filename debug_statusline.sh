@@ -391,7 +391,7 @@ fi
 
 info "REFRESH_INTERVAL: ${REFRESH_INTERVAL}s"
 [ -n "$TIMEZONE" ] && info "TIMEZONE: $TIMEZONE" || info "TIMEZONE: (system default)"
-info "SHOW_WEEKLY: ${SHOW_WEEKLY:-1}  SHOW_EXTRA: ${SHOW_EXTRA:-0}  SHOW_FABLE: ${SHOW_FABLE:-0}"
+info "SHOW_WEEKLY: ${SHOW_WEEKLY:-1}  SHOW_EXTRA: ${SHOW_EXTRA:-0}  SHOW_FABLE: ${SHOW_FABLE:-1}"
 
 # ════════════════════════════════════════════════════════════════════════════
 section "RENDER"

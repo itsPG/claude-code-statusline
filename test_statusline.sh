@@ -554,11 +554,12 @@ run_gated() {  # <stdin json> <extra env...> → 1 if the fake curl ran, else 0
 }
 STDIN_BOTH="{\"model\":\"claude-sonnet-4-6\",\"rate_limits\":{\"five_hour\":{\"used_percentage\":10},\"seven_day\":{\"used_percentage\":20}}}"
 STDIN_5H='{"model":"claude-sonnet-4-6","rate_limits":{"five_hour":{"used_percentage":10}}}'
-assert_eq "stdin covers all, SHOW_EXTRA=0 → no API" "0" "$(run_gated "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_EXTRA=0)"
-assert_eq "default (SHOW_EXTRA unset) → no API"     "0" "$(unset SHOW_EXTRA; run_gated "$STDIN_BOTH" SHOW_WEEKLY=1)"
-assert_eq "SHOW_EXTRA=1 still needs API"            "1" "$(run_gated "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_EXTRA=1)"
-assert_eq "stdin lacks seven_day → API"             "1" "$(run_gated "$STDIN_5H" SHOW_WEEKLY=1 SHOW_EXTRA=0)"
-assert_eq "no weekly wanted, five_hour only → no API" "0" "$(run_gated "$STDIN_5H" SHOW_WEEKLY=0 SHOW_EXTRA=0)"
+assert_eq "stdin covers all, SHOW_EXTRA=0 → no API" "0" "$(run_gated "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_EXTRA=0 SHOW_FABLE=0)"
+assert_eq "SHOW_EXTRA unset, no Fable → no API"     "0" "$(unset SHOW_EXTRA; run_gated "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_FABLE=0)"
+assert_eq "defaults (Fable on) → API"               "1" "$(unset SHOW_EXTRA SHOW_FABLE; run_gated "$STDIN_BOTH" SHOW_WEEKLY=1)"
+assert_eq "SHOW_EXTRA=1 still needs API"            "1" "$(run_gated "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_EXTRA=1 SHOW_FABLE=0)"
+assert_eq "stdin lacks seven_day → API"             "1" "$(run_gated "$STDIN_5H" SHOW_WEEKLY=1 SHOW_EXTRA=0 SHOW_FABLE=0)"
+assert_eq "no weekly wanted, five_hour only → no API" "0" "$(run_gated "$STDIN_5H" SHOW_WEEKLY=0 SHOW_EXTRA=0 SHOW_FABLE=0)"
 assert_eq "no stdin rate_limits → API"              "1" "$(run_gated '{"model":"claude-sonnet-4-6"}' SHOW_WEEKLY=0 SHOW_EXTRA=0)"
 assert_eq "SHOW_FABLE=1 needs API"                  "1" "$(run_gated "$STDIN_BOTH" SHOW_WEEKLY=1 SHOW_EXTRA=0 SHOW_FABLE=1)"
 
