@@ -660,6 +660,19 @@ echo '{"error":{"type":"rate_limit_error","message":"Rate limited."}}' > "$GATE_
 OUT=$(render_fable '{"model":"claude-sonnet-4-6"}' SHOW_WEEKLY=1)
 assert_absent "error body → no cache written" "$GATE_DIR/usage.json"
 
+# Test 42 — A failed refresh backs off for REFRESH_INTERVAL instead of retrying every render
+echo ""
+echo "-- Test 42: failed refresh backoff --"
+rm -f "$GATE_DIR"/*.failed
+assert_eq "first render after a failure-free start → API" "1" \
+    "$(run_gated '{"model":"claude-sonnet-4-6"}' FAKE_RESPONSE="$GATE_DIR/resp-fable.json" REFRESH_INTERVAL=300)"
+assert_eq "render right after a failed refresh → no API" "0" \
+    "$(run_gated '{"model":"claude-sonnet-4-6"}' FAKE_RESPONSE="$GATE_DIR/resp-fable.json" REFRESH_INTERVAL=300)"
+touch_ago 10 "$GATE_DIR/statusline-refresh.failed"
+assert_eq "failure older than REFRESH_INTERVAL → API again" "1" \
+    "$(run_gated '{"model":"claude-sonnet-4-6"}' FAKE_RESPONSE="$GATE_DIR/resp-fable.json" REFRESH_INTERVAL=300)"
+rm -f "$GATE_DIR"/*.failed
+
 # Test 40 — Cached Fable: stale cache → ⚠, past reset → 0%
 echo ""
 echo "-- Test 40: stale / rolled-over Fable cache --"

@@ -53,7 +53,7 @@ Claude Code → JSON stdin → statusline.sh → formatted status string
 - **Atomic cache writes**: Uses `tmp + mv` to prevent partial reads of the cache file.
 - **Backward compatible**: Reads both the old tmux-scraped cache format (`resets` text) and the new API format (`resets_at` ISO 8601).
 - **Cross-platform**: GNU stat (Linux) vs BSD stat (macOS) detection in `file_mtime()`. Avoids `grep -P` (not available on macOS).
-- **Graceful degradation**: If the API call fails (expired token, network issue, endpoint removed), the script silently falls back to cached data or displays without usage info.
+- **Graceful degradation**: If the API call fails (expired token, network issue, endpoint removed), the script silently falls back to cached data or displays without usage info. A failed refresh touches `statusline-refresh[-<hash>].failed` next to the lock file and blocks retries for `REFRESH_INTERVAL` (the cache mtime isn't updated on failure, so without it every render would retry).
 
 ### Usage API
 

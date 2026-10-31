@@ -101,12 +101,15 @@ file_mtime() {
     fi
 }
 
-cache_age_sec() {
-    [ ! -f "$USAGE_FILE" ] && echo 999999 && return
-    local age=$(( $(date +%s) - $(file_mtime "$USAGE_FILE") ))
+# file_age_sec <path> → seconds since last modification; 999999 when missing
+file_age_sec() {
+    [ ! -f "$1" ] && echo 999999 && return
+    local age=$(( $(date +%s) - $(file_mtime "$1") ))
     [ "$age" -lt 0 ] && age=0
     echo "$age"
 }
+
+cache_age_sec() { file_age_sec "$USAGE_FILE"; }
 
 # Coerce to a bare non-negative integer. Drops the decimal part then strips any
 # non-digit. Critical: percentages flow into $(( )), where a value like
@@ -305,10 +308,14 @@ fi
 
 # Lock outside world-writable /tmp to avoid a symlink/clobber on shared hosts.
 LOCK_FILE="${XDG_RUNTIME_DIR:-$HOME/.claude}/statusline-refresh${ACCOUNT_HASH:+-$ACCOUNT_HASH}.lock"
-if [ "$NEED_API" = 1 ] && [ "$(cache_age_sec)" -gt "$REFRESH_INTERVAL" ]; then
+# A failed refresh leaves the cache mtime untouched, so without this marker every render
+# would retry (and keep a 429 going). Touched on failure; retry after REFRESH_INTERVAL.
+FAIL_FILE="${LOCK_FILE%.lock}.failed"
+if [ "$NEED_API" = 1 ] && [ "$(cache_age_sec)" -gt "$REFRESH_INTERVAL" ] && \
+   [ "$(file_age_sec "$FAIL_FILE")" -gt "$REFRESH_INTERVAL" ]; then
     if command -v flock &>/dev/null; then
         # 2>/dev/null: if the lock dir is missing, skip the refresh quietly
-        ( flock -n 9 || exit 0; refresh_usage_api ) 9>"$LOCK_FILE" 2>/dev/null
+        ( flock -n 9 || exit 0; refresh_usage_api || touch "$FAIL_FILE" ) 9>"$LOCK_FILE" 2>/dev/null
     else
         # macOS: flock not available — remove stale lock then try to acquire
         if [ -f "$LOCK_FILE" ]; then
@@ -318,7 +325,7 @@ if [ "$NEED_API" = 1 ] && [ "$(cache_age_sec)" -gt "$REFRESH_INTERVAL" ]; then
             fi
         fi
         if ( set -o noclobber; echo $$ > "$LOCK_FILE" ) 2>/dev/null; then
-            refresh_usage_api
+            refresh_usage_api || touch "$FAIL_FILE" 2>/dev/null
             rm -f "$LOCK_FILE"
         fi
     fi
