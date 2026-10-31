@@ -236,18 +236,22 @@ refresh_usage_api() {
         -H "User-Agent: claude-code/${_claude_ver:-2.1.92}" \
         -H "anthropic-beta: oauth-2025-04-20" \
         -H "Content-Type: application/json" 2>/dev/null)
-    echo "$resp" | jq -e '.five_hour.utilization' >/dev/null 2>&1 || return 1
+    # Plans without a 5-hour limit (e.g. Ultra) send five_hour: null, so accept either window;
+    # an error body (e.g. a 429) has neither and must not overwrite the cache.
+    echo "$resp" | jq -e '(.five_hour.utilization? // .seven_day.utilization?) != null' \
+        >/dev/null 2>&1 || return 1
     local tmp
     tmp=$(mktemp "${USAGE_FILE}.XXXXXX") || return 1
     if echo "$resp" | jq '{
         timestamp: (now | todate),
         source: "api",
         metrics: {
-            session: {
+            # null = the plan has no 5-hour limit (NEED_API relies on this marker)
+            session: (if .five_hour then {
                 percent_used: .five_hour.utilization,
                 percent_remaining: (100 - .five_hour.utilization),
                 resets_at: .five_hour.resets_at
-            },
+            } else null end),
             week_all: (if .seven_day then {
                 percent_used: .seven_day.utilization,
                 percent_remaining: (100 - .seven_day.utilization),
@@ -282,8 +286,17 @@ refresh_usage_api() {
 # Native stdin rate_limits cover session + weekly. The API is still needed for extra
 # usage (SHOW_EXTRA), the Fable weekly quota (SHOW_FABLE) — neither is on stdin — and
 # as a fallback for any window stdin does not provide.
+# The session is also covered when the API cache records session: null (plan has no
+# 5-hour limit): polling can't add anything, and if a limit comes back stdin carries it.
+SESS_COVERED=0
+if [ -n "$J_RL_5H_PCT" ]; then
+    SESS_COVERED=1
+elif [ -f "$USAGE_FILE" ] && jq -e '.source == "api" and (.metrics | has("session"))
+        and .metrics.session == null' "$USAGE_FILE" >/dev/null 2>&1; then
+    SESS_COVERED=1
+fi
 NEED_API=1
-if [ -n "$J_RL_5H_PCT" ] && { [ "$SHOW_WEEKLY" != "1" ] || [ -n "$J_RL_7D_PCT" ]; } && \
+if [ "$SESS_COVERED" = 1 ] && { [ "$SHOW_WEEKLY" != "1" ] || [ -n "$J_RL_7D_PCT" ]; } && \
    [ "$SHOW_EXTRA" != "1" ] && [ "$SHOW_FABLE" != "1" ]; then
     NEED_API=0
 fi

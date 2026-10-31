@@ -22,7 +22,7 @@ For **1M/2M context windows**, thresholds are stricter: 🔵 <12% │ 🟢 <29% 
 |---------|---------|-------------|
 | **Model** | `Opus 4.6` | Active model. With effort set: `Opus 4.6/mx` |
 | **Context** | `🟢 Ctx 42%` | Context window fill. Shows `1M`/`2M` for large context (with stricter color thresholds) |
-| **Session** | `⏳ 🟡 35% ↻ 2h30m` | 5-hour session quota + countdown to reset |
+| **Session** | `⏳ 🟡 35% ↻ 2h30m` | 5-hour session quota + countdown to reset. Hidden on plans without a 5-hour limit (e.g. Ultra) |
 | **Weekly** | `📅 🔵 17% ↻ 2d` | 7-day all-models quota + countdown to reset |
 | **Fable** | `🔮 🟢 24%` | 7-day Fable quota, opt-in with `SHOW_FABLE=1`. Shares the weekly reset, so it shows its own countdown only when the 📅 segment is hidden |
 | **Extra** | `💳 🟢 20% $4.10/$20` | Pay-as-you-go extra usage — opt-in with `SHOW_EXTRA=1`, and only shown when enabled on your account |
@@ -38,7 +38,7 @@ Claude Code → JSON stdin → statusline.sh → formatted status string
 
 Session (5h) and weekly (7d) usage come from the `rate_limits` field Claude Code passes on stdin whenever it is present — always current, no network call. That field exists only on claude.ai Pro/Max plans, only after the first API response of a session, and each window may be absent independently.
 
-The usage API is called (at most every 2 minutes, configurable) only when something shown isn't covered by stdin: a missing `rate_limits` window, the Fable weekly quota (opt-in `SHOW_FABLE=1`, API-only), or extra usage (opt-in `SHOW_EXTRA=1`, API-only). With the defaults and both windows on stdin, no API call is made at all, and the usage segments update on every status line render instead of every 2 minutes. The call takes ~200ms and runs inline — no background processes, no tmux, no scraping.
+The usage API is called (at most every 2 minutes, configurable) only when something shown isn't covered by stdin: a missing `rate_limits` window, the Fable weekly quota (opt-in `SHOW_FABLE=1`, API-only), or extra usage (opt-in `SHOW_EXTRA=1`, API-only). With the defaults and both windows on stdin, no API call is made at all (on a plan without a 5-hour limit, stdin never carries `five_hour`; once the API has reported `five_hour: null`, the cache remembers it and the session window counts as covered), and the usage segments update on every status line render instead of every 2 minutes. The call takes ~200ms and runs inline — no background processes, no tmux, no scraping.
 
 The OAuth token is read from `~/.claude/.credentials.json`, or on macOS from the Keychain entry `Claude Code-credentials` when that file doesn't exist — both are maintained by Claude Code. If the token is expired or the API is unreachable, the script silently falls back to cached data or displays without usage info.
 

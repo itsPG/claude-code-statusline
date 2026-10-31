@@ -615,6 +615,51 @@ echo '{"five_hour":{"utilization":50.0,"resets_at":null},"limits":[{"kind":"week
 OUT=$(render_fable '{"model":"claude-sonnet-4-6"}' SHOW_FABLE=0)
 assert_contains "malformed scope → session still cached" "⏳ 🟡 50%" "$OUT"
 
+# Test 41 — Plan without a 5-hour limit: the API sends five_hour null
+echo ""
+echo "-- Test 41: no 5-hour limit --"
+# Trimmed from a real /api/oauth/usage response on an Ultra plan (2026-10-31): five_hour is
+# null and limits[] has no "session" entry.
+cat > "$GATE_DIR/resp-fable.json" <<JSON
+{"five_hour":null,
+ "seven_day":{"utilization":39.0,"resets_at":"$FABLE_RESET"},
+ "limits":[
+  {"kind":"weekly_all","group":"weekly","percent":39,"resets_at":"$FABLE_RESET","scope":null},
+  {"kind":"weekly_scoped","group":"weekly","percent":7,"resets_at":"$FABLE_RESET",
+   "scope":{"model":{"id":null,"display_name":"Fable"},"surface":null}}]}
+JSON
+OUT=$(render_fable '{"model":"claude-sonnet-4-6"}' SHOW_WEEKLY=1 SHOW_FABLE=1)
+assert_contains "weekly + Fable from API" "📅 🟢 39% ↻ 2d │ 🔮 🔵 7%" "$OUT"
+assert_not_contains "no session segment" "⏳" "$OUT"
+assert_eq "cache stores session null" "null" "$(jq -r '.metrics.session' "$GATE_DIR/usage.json")"
+assert_eq "cache stores week_all" "true" "$(jq '.metrics.week_all.percent_used == 39' "$GATE_DIR/usage.json")"
+# Once the cache records "no 5-hour limit", stdin without five_hour no longer needs the API
+STDIN_7D_ONLY='{"model":"claude-sonnet-4-6","rate_limits":{"seven_day":{"used_percentage":39}}}'
+assert_eq "no cache, stdin lacks five_hour → API" "1" "$(run_gated "$STDIN_7D_ONLY" SHOW_WEEKLY=1)"
+echo '{"source":"api","metrics":{"session":null}}' > "$GATE_DIR/usage-nolimit.json"
+gated_with_cache() {  # <stdin json> <cache file> <extra env...> → 1 if the fake curl ran
+    local json="$1" cache="$2"; shift 2
+    rm -f "$GATE_DIR/called"; cp "$cache" "$GATE_DIR/usage-run.json"; touch_ago 60 "$GATE_DIR/usage-run.json"
+    echo "$json" | env PATH="$GATE_DIR:$PATH" GATE_MARKER="$GATE_DIR/called" XDG_RUNTIME_DIR="$GATE_DIR" \
+        SETTINGS_FILE=/dev/null ACCOUNT_FILE=/dev/null \
+        CREDENTIALS_FILE="$GATE_DIR/creds.json" USAGE_FILE="$GATE_DIR/usage-run.json" REFRESH_INTERVAL=0 \
+        "$@" bash "$STATUSLINE_SH" >/dev/null 2>&1
+    [ -e "$GATE_DIR/called" ] && echo 1 || echo 0
+}
+assert_eq "cache says no 5h, stdin has seven_day → no API" "0" \
+    "$(gated_with_cache "$STDIN_7D_ONLY" "$GATE_DIR/usage-nolimit.json" SHOW_WEEKLY=1)"
+assert_eq "cache says no 5h, weekly hidden, no stdin limits → no API" "0" \
+    "$(gated_with_cache '{"model":"claude-sonnet-4-6"}' "$GATE_DIR/usage-nolimit.json" SHOW_WEEKLY=0)"
+assert_eq "cache says no 5h, stdin lacks seven_day → API" "1" \
+    "$(gated_with_cache '{"model":"claude-sonnet-4-6"}' "$GATE_DIR/usage-nolimit.json" SHOW_WEEKLY=1)"
+echo '{"source":"api","metrics":{"session":{"percent_used":5}}}' > "$GATE_DIR/usage-limit.json"
+assert_eq "cache has a session, stdin lacks five_hour → API" "1" \
+    "$(gated_with_cache "$STDIN_7D_ONLY" "$GATE_DIR/usage-limit.json" SHOW_WEEKLY=1)"
+# An error body (e.g. 429) must not overwrite the cache
+echo '{"error":{"type":"rate_limit_error","message":"Rate limited."}}' > "$GATE_DIR/resp-fable.json"
+OUT=$(render_fable '{"model":"claude-sonnet-4-6"}' SHOW_WEEKLY=1)
+assert_absent "error body → no cache written" "$GATE_DIR/usage.json"
+
 # Test 40 — Cached Fable: stale cache → ⚠, past reset → 0%
 echo ""
 echo "-- Test 40: stale / rolled-over Fable cache --"

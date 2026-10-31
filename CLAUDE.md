@@ -42,7 +42,7 @@ Claude Code → JSON stdin → statusline.sh → formatted status string
 ```
 
 - **Native stdin first**: `rate_limits.five_hour` / `.seven_day` (Claude Code ≥ 2.1.80, Pro/Max only, present only after the first API response; each window may be absent; `resets_at` is Unix epoch seconds) are preferred over the cache, per window.
-- **`NEED_API`**: the API is skipped only when stdin has `five_hour`, has `seven_day` (or `SHOW_WEEKLY≠1`), `SHOW_EXTRA≠1`, and `SHOW_FABLE≠1` — extra usage and the Fable weekly quota are API-only.
+- **`NEED_API`**: the API is skipped only when the session is covered (stdin has `five_hour`, or the API cache has `metrics.session: null` = plan without a 5-hour limit), stdin has `seven_day` (or `SHOW_WEEKLY≠1`), `SHOW_EXTRA≠1`, and `SHOW_FABLE≠1` — extra usage and the Fable weekly quota are API-only.
 - **Per-account cache**: `<hash>` = first 8 hex of sha256(`accountUuid:organizationUuid`) from `~/.claude.json` → `.oauthAccount`, not the access token (tokens rotate; the old token-keyed `usage-exact-<8 hex>.json` files are orphans that `install.sh` deletes). No token or no `accountUuid` → the unsuffixed base path. Assumes Claude Code updates `oauthAccount` on `/login` account switches (not verified).
 - **Stale ⚠** (cache older than 3× `REFRESH_INTERVAL`): on the session dot only when the session came from the cache; on the Fable dot always (Fable is cache-only). A past `resets_at` zeroes session and Fable.
 
@@ -71,6 +71,8 @@ The script uses `https://api.anthropic.com/api/oauth/usage`, an undocumented Ant
   ]
 }
 ```
+
+Observed 2026-10-31 on an Ultra plan (no 5-hour limit): `five_hour` is `null` and `limits[]` has no `session` entry; `seven_day` and the Fable `limits[]` entry are still present. The cache then stores `metrics.session: null`.
 
 Observed 2026-09-26: per-model weekly quotas are **not** in `seven_day_*` (`seven_day_opus` / `seven_day_sonnet` were `null`) and not on stdin `rate_limits`; the Fable quota exists only as the `limits[]` entry above (`model.id` is `null`, so match on `display_name`). `limits[]` also repeats `session` / `weekly_all`.
 
